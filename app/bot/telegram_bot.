@@ -17,7 +17,6 @@ class TelegramBot:
         self.bot = Bot(token=settings.BOT_TOKEN)
         self.dp = Dispatcher()
         self.setup_handlers()
-        #self.dp.middleware.setup(SubscriptionMiddleware())
         self.dp.message.middleware(SubscriptionMiddleware())
         self.dp.callback_query.middleware(SubscriptionMiddleware())
 
