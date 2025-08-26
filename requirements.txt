@@ -50,4 +50,4 @@ urllib3==2.5.0
 uvicorn==0.35.0
 yarl==1.20.1
 alembic==1.16.4
-psycopg2-binary==2.9.14
+psycopg2-binary==2.9.10
