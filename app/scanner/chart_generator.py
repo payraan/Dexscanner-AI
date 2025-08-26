@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from datetime import datetime
+from datetime import datetime, timedelta # <-- مشکل اینجا بود و حالا حل شد
 import pandas as pd
 import numpy as np
 import io
@@ -52,7 +52,7 @@ class ChartGenerator:
         colors = ['#e74c3c', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3', '#ff9f43', '#2ecc71']
         for i, (level, price) in enumerate(fib_data['levels'].items()):
             ax.axhline(y=price, color=colors[i % len(colors)], linestyle='--', 
-                      linewidth=1, alpha=0.7)
+                       linewidth=1, alpha=0.7)
             ax.text(ax.get_xlim()[1], price, f'  Fib {level:.3f}', 
                    color=colors[i % len(colors)], va='center', ha='left', fontsize=9)
 
@@ -64,7 +64,7 @@ class ChartGenerator:
         colors = ['#4caf50', '#8bc34a']
         for i, (level, price) in enumerate(fib_ext_data['levels'].items()):
             ax.axhline(y=price, color=colors[i % len(colors)], linestyle=':', 
-                      linewidth=1.2, alpha=0.9)
+                       linewidth=1.2, alpha=0.9)
             ax.text(ax.get_xlim()[1], price, f'  Target {level:.3f}', 
                    color=colors[i % len(colors)], va='center', ha='left', fontsize=9)
 
@@ -77,9 +77,9 @@ class ChartGenerator:
             # Draw zone as horizontal rectangle
             zone_height = zone['price'] * 0.01  # 1% height
             ax.axhspan(zone['price'] - zone_height/2, 
-                      zone['price'] + zone_height/2,
-                      color=color, alpha=alpha, 
-                      label=f"{zone['type'].title()} (Score: {zone['score']:.1f})")
+                       zone['price'] + zone_height/2,
+                       color=color, alpha=alpha, 
+                       label=f"{zone['type'].title()} (Score: {zone['score']:.1f})")
 
     def create_signal_chart(self, df: pd.DataFrame, token_data: Dict, signal_data: Dict) -> Optional[bytes]:
         """Create candlestick chart with all indicators"""
@@ -181,63 +181,60 @@ class ChartGenerator:
                  alpha=0.1,
                  fontweight='bold')
 
-        def _format_chart(self, ax, token_data, signal_data, df):
-            """
-            نسخه اصلاح‌شده برای فرمت‌بندی چارت با محورهای هوشمند.
-            این تابع مشکل فضای خالی بالای چارت و محور زمان را حل می‌کند.
-            """
-            import matplotlib.dates as mdates
-            from datetime import timedelta
+    def _format_chart(self, ax, token_data, signal_data, df):
+        """
+        نسخه اصلاح‌شده برای فرمت‌بندی چارت با محورهای هوشمند.
+        این تابع مشکل فضای خالی بالای چارت و محور زمان را حل می‌کند.
+        """
+        ax.set_title(f"{token_data['token']} - Signal: {signal_data['signal_type'].replace('_', ' ').title()}",
+                    color='white', fontsize=16, fontweight='bold')
 
-            ax.set_title(f"{token_data['token']} - Signal: {signal_data['signal_type'].replace('_', ' ').title()}",
-                        color='white', fontsize=16, fontweight='bold')
+        ax.grid(True, alpha=0.2, color='#555555')
+        ax.set_ylabel('Price ($)', color='white')
 
-            ax.grid(True, alpha=0.2, color='#555555')
-            ax.set_ylabel('Price ($)', color='white')
+        # --- بخش کلیدی ۱: اصلاح محدوده محور Y (رفع فضای خالی) ---
+        # به جای استفاده از محدوده خودکار، محدوده را بر اساس کندل‌ها تنظیم می‌کنیم
+        visible_df = df.iloc[-100:] # تمرکز روی ۱۰۰ کندل آخر برای تعیین محدوده
+        min_price = visible_df['low'].min()
+        max_price = visible_df['high'].max()
+        padding = (max_price - min_price) * 0.05  # اضافه کردن ۵٪ حاشیه در بالا و پایین
 
-            # --- بخش کلیدی ۱: اصلاح محدوده محور Y (رفع فضای خالی) ---
-            # به جای استفاده از محدوده خودکار، محدوده را بر اساس کندل‌ها تنظیم می‌کنیم
-            visible_df = df.iloc[-100:] # تمرکز روی ۱۰۰ کندل آخر برای تعیین محدوده
-            min_price = visible_df['low'].min()
-            max_price = visible_df['high'].max()
-            padding = (max_price - min_price) * 0.05  # اضافه کردن ۵٪ حاشیه در بالا و پایین
+        ax.set_ylim(min_price - padding, max_price + padding)
 
-            ax.set_ylim(min_price - padding, max_price + padding)
+        # --- بخش کلیدی ۲: اصلاح و هوشمندسازی محور X (زمان) ---
+        total_duration = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
 
-            # --- بخش کلیدی ۲: اصلاح و هوشمندسازی محور X (زمان) ---
-            total_duration = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
-
-            if total_duration < timedelta(days=2):
-                # برای تایم‌فریم‌های کوتاه (کمتر از ۲ روز)
-                locator = mdates.AutoDateLocator(minticks=5, maxticks=8)
-                formatter = mdates.DateFormatter('%H:%M\n%d-%b')
-            elif total_duration < timedelta(days=15):
-                # برای تایم‌فریم‌های متوسط (بین ۲ تا ۱۵ روز)
-                locator = mdates.DayLocator(interval=max(1, int(total_duration.days / 7)))
-                formatter = mdates.DateFormatter('%d-%b')
-            else:
-                # برای تایم‌فریم‌های بلند (بیش از ۱۵ روز)
-                locator = mdates.AutoDateLocator(minticks=4, maxticks=7)
-                formatter = mdates.DateFormatter('%b-%Y')
+        if total_duration < timedelta(days=2):
+            # برای تایم‌فریم‌های کوتاه (کمتر از ۲ روز)
+            locator = mdates.AutoDateLocator(minticks=5, maxticks=8)
+            formatter = mdates.DateFormatter('%H:%M\n%d-%b')
+        elif total_duration < timedelta(days=15):
+            # برای تایم‌فریم‌های متوسط (بین ۲ تا ۱۵ روز)
+            locator = mdates.DayLocator(interval=max(1, int(total_duration.days / 7)))
+            formatter = mdates.DateFormatter('%d-%b')
+        else:
+            # برای تایم‌فریم‌های بلند (بیش از ۱۵ روز)
+            locator = mdates.AutoDateLocator(minticks=4, maxticks=7)
+            formatter = mdates.DateFormatter('%b-%Y')
             
-            ax.xaxis.set_major_locator(locator)
-            ax.xaxis.set_major_formatter(formatter)
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha='right')
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha='right')
         
-            # --- بقیه تنظیمات ---
-            ax.tick_params(axis='both', colors='white', labelsize=10)
-            for spine in ax.spines.values():
-                spine.set_edgecolor('#555555')
+        # --- بقیه تنظیمات ---
+        ax.tick_params(axis='both', colors='white', labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#555555')
             
-            time_range = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
-            right_margin = time_range * 0.1 # افزایش حاشیه سمت راست برای نمایش بهتر لیبل‌ها
+        time_range = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
+        right_margin = time_range * 0.1 # افزایش حاشیه سمت راست برای نمایش بهتر لیبل‌ها
         
-            ax.set_xlim(df['datetime'].iloc[0], df['datetime'].iloc[-1] + right_margin)
+        ax.set_xlim(df['datetime'].iloc[0], df['datetime'].iloc[-1] + right_margin)
         
-            ax.yaxis.tick_right()
-            ax.yaxis.set_label_position('right')
+        ax.yaxis.tick_right()
+        ax.yaxis.set_label_position('right')
 
-            if ax.get_legend_handles_labels()[0]:
-                ax.legend(loc='upper left', framealpha=0.3, fontsize=9)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc='upper left', framealpha=0.3, fontsize=9)
 
 chart_generator = ChartGenerator()
