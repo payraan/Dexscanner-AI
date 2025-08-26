@@ -5,6 +5,7 @@ from app.database.session import init_db
 from app.bot.telegram_bot import telegram_bot
 from app.scanner.scanner import token_scanner
 from app.services.redis_client import redis_client
+from app.core.logging_config import setup_logging
 import asyncio
 
 @asynccontextmanager
