@@ -55,10 +55,42 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    from app.database.session import get_db
+    from app.database.models import User
+    from sqlalchemy import select, text
+    import datetime
+    
+    # Check database
+    db_status = "healthy"
+    try:
+        async for session in get_db():
+            await session.execute(text("SELECT 1"))
+            break
+    except:
+        db_status = "error"
+    
+    # Count active users
+    user_count = 0
+    try:
+        async for session in get_db():
+            result = await session.execute(select(User).where(User.is_subscribed == True))
+            user_count = len(result.scalars().all())
+            break
+    except:
+        pass
+    
     return {
-        "status": "healthy", 
-        "telegram_configured": bool(settings.BOT_TOKEN),
-        "redis_connected": redis_client.connected
+        "status": "healthy",
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "services": {
+            "telegram": bool(settings.BOT_TOKEN),
+            "database": db_status,
+            "redis": redis_client.connected
+        },
+        "metrics": {
+            "active_users": user_count,
+            "scanner_interval": settings.SCAN_INTERVAL
+        }
     }
 
 @app.get("/trending")
