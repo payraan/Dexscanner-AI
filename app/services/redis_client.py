@@ -15,20 +15,14 @@ class RedisClient:
        """Connect to Redis"""
        try:
            redis_url = getattr(settings, 'REDIS_URL', None)
-           print(f"DEBUG: Redis URL = {redis_url}")  # Debug line
            if redis_url:
-               print("DEBUG: Creating Redis client...")  # Debug line
                self.redis_client = redis.from_url(redis_url)
-               print("DEBUG: Attempting ping...")  # Debug line
                await self.redis_client.ping()
                self.connected = True
-               print("✅ Redis connected successfully")
                logger.info("✅ Redis connected successfully")
            else:
-               print("⚠️ Redis URL not configured")
                logger.warning("⚠️ Redis URL not configured")
        except Exception as e:
-           print(f"❌ Redis connection failed: {e}")
            logger.error(f"❌ Redis connection failed: {e}")
            self.connected = False
 
