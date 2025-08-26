@@ -71,6 +71,86 @@ class TradingStrategies:
                 }
         return None
     
+    def obv_uptrend(self, df: pd.DataFrame) -> Optional[Dict]:
+        """Detect OBV uptrend confirmation"""
+        if len(df) < 20:
+            return None
+    
+        # Calculate OBV (On Balance Volume)
+        obv = []
+        obv_val = 0
+    
+        for i in range(len(df)):
+            if i == 0:
+                obv_val = df['volume'].iloc[i]
+            else:
+                if df['close'].iloc[i] > df['close'].iloc[i-1]:
+                    obv_val += df['volume'].iloc[i]
+                elif df['close'].iloc[i] < df['close'].iloc[i-1]:
+                    obv_val -= df['volume'].iloc[i]
+            obv.append(obv_val)
+    
+        df_temp = df.copy()
+        df_temp['obv'] = obv
+    
+        # Check for OBV uptrend with price confirmation
+        obv_slope = (obv[-1] - obv[-10]) / 10  # OBV slope over 10 periods
+        price_making_higher_highs = df['high'].iloc[-1] > df['high'].iloc[-5]
+    
+        if obv_slope > 0 and price_making_higher_highs:
+            strength = min(abs(obv_slope) / max(obv[-10:]) * 100, 10.0)
+            return {
+                'signal': 'obv_uptrend',
+                'strength': strength,
+                'obv_slope': obv_slope
+            }
+        return None
+
+    def three_white_soldiers(self, df: pd.DataFrame) -> Optional[Dict]:
+        """Detect Three White Soldiers candlestick pattern"""
+        if len(df) < 5:
+            return None
+    
+        # Get last 3 candles
+        last_3 = df.tail(3)
+    
+        # Check for 3 consecutive green candles
+        all_green = all(candle['close'] > candle['open'] for _, candle in last_3.iterrows())
+    
+        if not all_green:
+            return None
+    
+        # Check for ascending highs and closes
+        ascending_closes = (
+            last_3.iloc[1]['close'] > last_3.iloc[0]['close'] and
+            last_3.iloc[2]['close'] > last_3.iloc[1]['close']
+        )
+    
+        ascending_highs = (
+            last_3.iloc[1]['high'] > last_3.iloc[0]['high'] and  
+            last_3.iloc[2]['high'] > last_3.iloc[1]['high']
+        )
+    
+        # Check for decent body sizes (not just wicks)
+        min_body_size = 0.005  # 0.5% minimum body
+        strong_bodies = all(
+            abs(candle['close'] - candle['open']) / candle['open'] > min_body_size
+            for _, candle in last_3.iterrows()
+        )
+    
+        if ascending_closes and ascending_highs and strong_bodies:
+            # Calculate strength based on momentum
+            total_gain = (last_3.iloc[-1]['close'] - last_3.iloc[0]['open']) / last_3.iloc[0]['open']
+            strength = min(total_gain * 200, 10.0)  # Scale to 0-10
+        
+            return {
+                'signal': 'three_white_soldiers',
+                'strength': max(strength, 3.0),  # Minimum strength 3 for this pattern
+                'total_gain': total_gain
+            }
+    
+        return None
+
     def evaluate_all_strategies(self, df: pd.DataFrame) -> List[Dict]:
         """Evaluate all trading strategies"""
         strategies = []
@@ -91,5 +171,13 @@ class TradingStrategies:
         # Sort by strength
         strategies.sort(key=lambda x: x['strength'], reverse=True)
         return strategies
+
+        obv_result = self.obv_uptrend(df)
+        if obv_result:
+            strategies.append(obv_result)
+
+        soldiers_result = self.three_white_soldiers(df)
+        if soldiers_result:
+            strategies.append(soldiers_result)
 
 trading_strategies = TradingStrategies()
