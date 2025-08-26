@@ -29,4 +29,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
 
+    # Redis
+    REDIS_URL: str = ""
+
 settings = Settings()
