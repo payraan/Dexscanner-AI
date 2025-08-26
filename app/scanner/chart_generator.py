@@ -181,36 +181,63 @@ class ChartGenerator:
                  alpha=0.1,
                  fontweight='bold')
 
-    def _format_chart(self, ax, token_data, signal_data, df):
-        """Format chart appearance and X-axis"""
-        ax.set_title(f"{token_data['token']} - Signal: {signal_data['signal_type']}",
-                    color='white', fontsize=16, fontweight='bold')
+        def _format_chart(self, ax, token_data, signal_data, df):
+            """
+            نسخه اصلاح‌شده برای فرمت‌بندی چارت با محورهای هوشمند.
+            این تابع مشکل فضای خالی بالای چارت و محور زمان را حل می‌کند.
+            """
+            import matplotlib.dates as mdates
+            from datetime import timedelta
 
-        ax.grid(True, alpha=0.2, color='#555555')
-        ax.set_ylabel('Price ($)', color='white')
+            ax.set_title(f"{token_data['token']} - Signal: {signal_data['signal_type'].replace('_', ' ').title()}",
+                        color='white', fontsize=16, fontweight='bold')
 
-        # Format time axis
-        ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, len(df)//8)))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%d %b'))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+            ax.grid(True, alpha=0.2, color='#555555')
+            ax.set_ylabel('Price ($)', color='white')
 
-        # Style axes
-        ax.tick_params(axis='both', colors='white', labelsize=10)
-        for spine in ax.spines.values():
-            spine.set_edgecolor('#555555')
+            # --- بخش کلیدی ۱: اصلاح محدوده محور Y (رفع فضای خالی) ---
+            # به جای استفاده از محدوده خودکار، محدوده را بر اساس کندل‌ها تنظیم می‌کنیم
+            visible_df = df.iloc[-100:] # تمرکز روی ۱۰۰ کندل آخر برای تعیین محدوده
+            min_price = visible_df['low'].min()
+            max_price = visible_df['high'].max()
+            padding = (max_price - min_price) * 0.05  # اضافه کردن ۵٪ حاشیه در بالا و پایین
+
+            ax.set_ylim(min_price - padding, max_price + padding)
+
+            # --- بخش کلیدی ۲: اصلاح و هوشمندسازی محور X (زمان) ---
+            total_duration = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
+
+            if total_duration < timedelta(days=2):
+                # برای تایم‌فریم‌های کوتاه (کمتر از ۲ روز)
+                locator = mdates.AutoDateLocator(minticks=5, maxticks=8)
+                formatter = mdates.DateFormatter('%H:%M\n%d-%b')
+            elif total_duration < timedelta(days=15):
+                # برای تایم‌فریم‌های متوسط (بین ۲ تا ۱۵ روز)
+                locator = mdates.DayLocator(interval=max(1, int(total_duration.days / 7)))
+                formatter = mdates.DateFormatter('%d-%b')
+            else:
+                # برای تایم‌فریم‌های بلند (بیش از ۱۵ روز)
+                locator = mdates.AutoDateLocator(minticks=4, maxticks=7)
+                formatter = mdates.DateFormatter('%b-%Y')
             
-        # Set limits with margin
-        time_range = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
-        right_margin = time_range * 0.05
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha='right')
         
-        ax.set_xlim(df['datetime'].iloc[0], df['datetime'].iloc[-1] + right_margin)
-        ax.set_ylim(df['low'].min() * 0.98, df['high'].max() * 1.02)
+            # --- بقیه تنظیمات ---
+            ax.tick_params(axis='both', colors='white', labelsize=10)
+            for spine in ax.spines.values():
+                spine.set_edgecolor('#555555')
+            
+            time_range = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
+            right_margin = time_range * 0.1 # افزایش حاشیه سمت راست برای نمایش بهتر لیبل‌ها
         
-        # Y-axis on right side
-        ax.yaxis.tick_right()
-        ax.yaxis.set_label_position('right')
+            ax.set_xlim(df['datetime'].iloc[0], df['datetime'].iloc[-1] + right_margin)
+        
+            ax.yaxis.tick_right()
+            ax.yaxis.set_label_position('right')
 
-        if ax.get_legend_handles_labels()[0]:
-            ax.legend(loc='upper left', framealpha=0.1)
+            if ax.get_legend_handles_labels()[0]:
+                ax.legend(loc='upper left', framealpha=0.3, fontsize=9)
 
 chart_generator = ChartGenerator()
