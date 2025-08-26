@@ -2,32 +2,51 @@ import httpx
 import pandas as pd
 from typing import Optional, List, Dict
 import asyncio
+import hashlib
+from app.services.redis_client import redis_client
 
 class DataProvider:
     def __init__(self):
         self.base_url = "https://api.geckoterminal.com/api/v2"
         
+    def _generate_cache_key(self, endpoint: str, params: dict) -> str:
+        """Generate unique cache key for API request"""
+        cache_string = f"{endpoint}_{str(sorted(params.items()))}"
+        return hashlib.md5(cache_string.encode()).hexdigest()
+        
     async def fetch_trending_tokens(self, limit: int = 50) -> List[Dict]:
-        """Fetch trending tokens from GeckoTerminal"""
+        """Fetch trending tokens with Redis caching"""
         url = f"{self.base_url}/networks/solana/trending_pools"
         params = {
             'include': 'base_token,quote_token',
             'limit': str(limit)
         }
         
+        # Check cache first
+        cache_key = self._generate_cache_key("trending_pools", params)
+        cached_data = await redis_client.get(cache_key)
+        
+        if cached_data:
+            return cached_data
+        
+        # Fetch from API if not cached
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, params=params)
                 if response.status_code == 200:
                     data = response.json()
-                    return self._process_trending_data(data)
+                    processed_data = self._process_trending_data(data)
+                    
+                    # Cache for 60 seconds
+                    await redis_client.set(cache_key, processed_data, ttl=60)
+                    return processed_data
         except Exception as e:
             print(f"Error fetching trending tokens: {e}")
         return []
     
     async def fetch_ohlcv(self, pool_id: str, timeframe: str = "hour", 
                          aggregate: str = "1", limit: int = 200) -> Optional[pd.DataFrame]:
-        """Fetch OHLCV data for a pool"""
+        """Fetch OHLCV data with Redis caching"""
         network, pool_address = pool_id.split('_')
         url = f"{self.base_url}/networks/{network}/pools/{pool_address}/ohlcv/{timeframe}"
         
@@ -36,12 +55,25 @@ class DataProvider:
             'limit': str(limit)
         }
         
+        # Check cache first
+        cache_key = self._generate_cache_key(f"ohlcv_{pool_id}_{timeframe}", params)
+        cached_data = await redis_client.get(cache_key)
+        
+        if cached_data:
+            return pd.DataFrame(cached_data)
+        
+        # Fetch from API if not cached
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, params=params)
                 if response.status_code == 200:
                     data = response.json()
-                    return self._process_ohlcv_data(data)
+                    df = self._process_ohlcv_data(data)
+                    
+                    if not df.empty:
+                        # Cache for 120 seconds
+                        await redis_client.set(cache_key, df.to_dict('records'), ttl=120)
+                    return df
         except Exception as e:
             print(f"Error fetching OHLCV data: {e}")
         return None

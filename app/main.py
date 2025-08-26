@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.database.session import init_db
 from app.bot.telegram_bot import telegram_bot
 from app.scanner.scanner import token_scanner
+from app.services.redis_client import redis_client
 import asyncio
 
 @asynccontextmanager
@@ -20,6 +21,9 @@ async def lifespan(app: FastAPI):
             print("⚠️ Database URL not configured - running in memory mode")
     except Exception as e:
         print(f"⚠️ Database connection failed: {str(e)[:50]}... - running in memory mode")
+
+    # Initialize Redis
+    await redis_client.connect()
 
     # Start Telegram bot
     if settings.BOT_TOKEN and settings.BOT_TOKEN != "your_bot_token_here":
@@ -51,7 +55,11 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "telegram_configured": bool(settings.BOT_TOKEN)}
+    return {
+        "status": "healthy", 
+        "telegram_configured": bool(settings.BOT_TOKEN),
+        "redis_connected": redis_client.connected
+    }
 
 @app.get("/trending")
 async def get_trending():
