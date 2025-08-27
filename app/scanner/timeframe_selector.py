@@ -1,33 +1,33 @@
-from datetime import datetime, timedelta
+# این فایل فقط حاوی یک تابع است که به درستی کار می‌کند
+from datetime import datetime, timedelta, timezone
 from typing import Tuple
-import pandas as pd
 
 def get_dynamic_timeframe(launch_date: datetime) -> Tuple[str, str]:
-    """تابع قدیمی که دیگر استفاده نخواهد شد اما برای سازگاری باقی می‌ماند."""
-    age = datetime.utcnow() - launch_date
-    if age < timedelta(hours=4): return ("minute", "1")
-    elif age < timedelta(hours=12): return ("minute", "5")
-    elif age < timedelta(days=1): return ("minute", "15")
-    elif age < timedelta(days=3): return ("hour", "1")
-    elif age < timedelta(days=7): return ("hour", "4")
-    elif age < timedelta(days=30): return ("hour", "12")
-    else: return ("day", "1")
-
-def get_timeframe_from_data(df: pd.DataFrame) -> Tuple[str, str]:
     """
-    تابع جدید و هوشمند: تعیین تایم‌فریم بر اساس سن واقعی توکن از روی داده‌های OHLCV.
+    سیستم پیشرفته انتخاب تایم‌فریم بهینه بر اساس سن دقیق توکن.
+    این نسخه برای حل مشکل منطقه زمانی (timezone) اصلاح شده است.
     """
-    if df is None or df.empty or 'timestamp' not in df.columns or len(df) < 2:
+    # بررسی می‌کند که ورودی حتما از نوع datetime باشد
+    if not isinstance(launch_date, datetime):
+        # اگر launch_date معتبر نباشد، یک تایم‌فریم پیش‌فرض برمی‌گرداند
         return ("hour", "1")
+
+    # --- راه‌حل کلیدی: استفاده از datetime.now(timezone.utc) برای هماهنگ‌سازی مناطق زمانی ---
+    # این کد زمان فعلی را به صورت "آگاه" از منطقه زمانی UTC دریافت می‌کند
+    age = datetime.now(timezone.utc) - launch_date
     
-    first_ts, last_ts = df['timestamp'].min(), df['timestamp'].max()
-    age_hours = (last_ts - first_ts) / 3600
-    age_days = age_hours / 24
-    
-    if age_hours < 4: return ("minute", "1")
-    elif age_hours < 12: return ("minute", "5")
-    elif age_hours < 24: return ("minute", "15")
-    elif age_days < 3: return ("hour", "1")
-    elif age_days < 7: return ("hour", "4")
-    elif age_days < 30: return ("hour", "12")
-    else: return ("day", "1")
+    # بقیه منطق انتخاب تایم‌فریم بدون تغییر باقی می‌ماند
+    if age < timedelta(hours=4):
+        return ("minute", "1")
+    elif age < timedelta(hours=12):
+        return ("minute", "5")
+    elif age < timedelta(days=1):
+        return ("minute", "15")
+    elif age < timedelta(days=3):
+        return ("hour", "1")
+    elif age < timedelta(days=7):
+        return ("hour", "4")
+    elif age < timedelta(days=30):
+        return ("hour", "12")
+    else:
+        return ("day", "1")
