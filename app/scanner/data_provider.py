@@ -4,6 +4,10 @@ from typing import Optional, List, Dict
 import asyncio
 import hashlib
 from app.services.redis_client import redis_client
+# --- این دو خط باید اضافه شوند ---
+import logging
+logger = logging.getLogger(__name__)
+# ---------------------------------
 
 class DataProvider:
     def __init__(self):
