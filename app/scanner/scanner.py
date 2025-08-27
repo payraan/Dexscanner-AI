@@ -61,6 +61,8 @@ class TokenScanner:
                     logger.info("Signal skipped due to cooldown", 
                               extra={'token_symbol': signal['token']})
 
+            await asyncio.sleep(2) 
+
         logger.info("Health screening completed", 
                    extra={'healthy_tokens': healthy_tokens, 'total_tokens': len(tokens)})
 

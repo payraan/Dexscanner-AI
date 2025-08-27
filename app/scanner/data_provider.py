@@ -140,4 +140,35 @@ class DataProvider:
         
         return df
 
+    async def fetch_pool_details(self, pool_id: str) -> Optional[Dict]:
+        """
+        اطلاعات کامل یک استخر (pool) از جمله تاریخ دقیق ایجاد آن را دریافت می‌کند.
+        این تابع به صورت هوشمند نتایج را در ردیس کش می‌کند تا از درخواست‌های تکراری جلوگیری شود.
+        """
+        network, pool_address = pool_id.split('_')
+        url = f"{self.base_url}/networks/{network}/pools/{pool_address}"
+        
+        # ابتدا کش را برای این pool_id بررسی می‌کنیم
+        cache_key = f"pool_details_{pool_id}"
+        cached_data = await redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Using cached pool details for {pool_id}")
+            return cached_data
+            
+        # اگر در کش نبود، درخواست جدید به API ارسال می‌شود
+        logger.info(f"Fetching new pool details from API for {pool_id}")
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(url)
+                if response.status_code == 200:
+                    # فقط بخش attributes که حاوی تاریخ است را استخراج می‌کنیم
+                    data = response.json().get('data', {}).get('attributes', {})
+                    if data:
+                        # نتیجه را برای ۲۴ ساعت در ردیس کش می‌کنیم
+                        await redis_client.set(cache_key, data, ttl=86400)
+                    return data
+        except Exception as e:
+            logger.error(f"Error fetching pool details for {pool_id}: {e}")
+        return None
+
 data_provider = DataProvider()
