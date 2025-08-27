@@ -1,183 +1,122 @@
 import pandas as pd
-import numpy as np
 from typing import List, Dict, Optional
+
+# --- افزودن import های جدید ---
+from app.scanner.zone_engine import zone_engine
+from app.database.session import get_db
+
+# تعریف آستانه‌ها برای تشخیص وضعیت
+APPROACH_THRESHOLD = 0.02  # 2% فاصله برای نزدیک شدن
+BREAKOUT_THRESHOLD = 0.005 # 0.5% عبور برای شکست قطعی
+COOLDOWN_DISTANCE = 0.05   # 5% فاصله برای ریست شدن وضعیت
 
 class TradingStrategies:
     
     def __init__(self):
         self.min_candles = 20
     
+    async def stateful_zone_strategy(self, df: pd.DataFrame, zones: List[Dict], token_address: str) -> Optional[Dict]:
+        """
+        یک استراتژی هوشمند و دارای حافظه برای تحلیل نواحی حمایت و مقاومت.
+        این تابع جایگزین استراتژی‌های momentum_breakout و support_bounce می‌شود.
+        """
+        if not zones or df.empty:
+            return None
+
+        current_price = df['close'].iloc[-1]
+        
+        async for session in get_db():
+            for zone in zones:
+                zone_price = zone.get('price')
+                if not zone_price: continue
+
+                zone_type = zone.get('type') # 'resistance' or 'support'
+
+                # دریافت وضعیت قبلی این ناحیه از دیتابیس
+                state_info = await zone_engine.get_zone_state(session, token_address, zone_price)
+                current_state = state_info.current_state
+
+                # محاسبه فاصله قیمت فعلی از ناحیه
+                distance_from_zone = (current_price - zone_price) / zone_price
+                abs_distance = abs(distance_from_zone)
+                
+                new_state = current_state
+                signal_type = None
+
+                # --- منطق تصمیم‌گیری بر اساس وضعیت ---
+
+                # 1. اگر قیمت یک مقاومت را شکسته باشد
+                if zone_type == 'resistance' and distance_from_zone > BREAKOUT_THRESHOLD:
+                    if current_state != 'BROKEN_UP':
+                        new_state = 'BROKEN_UP'
+                        signal_type = 'resistance_breakout'
+
+                # 2. اگر قیمت یک حمایت را شکسته باشد (ریزش)
+                elif zone_type == 'support' and distance_from_zone < -BREAKOUT_THRESHOLD:
+                    if current_state != 'BROKEN_DOWN':
+                        new_state = 'BROKEN_DOWN'
+                        signal_type = 'support_breakdown'
+
+                # 3. اگر قیمت در حال تست یک ناحیه است
+                elif abs_distance < APPROACH_THRESHOLD:
+                    if current_state not in ['TESTING_SUPPORT', 'TESTING_RESISTANCE']:
+                        new_state = 'TESTING_SUPPORT' if zone_type == 'support' else 'TESTING_RESISTANCE'
+                        signal_type = 'support_test' if zone_type == 'support' else 'resistance_test'
+                
+                # 4. اگر قیمت از ناحیه دور شده باشد، وضعیت را ریست کن
+                elif abs_distance > COOLDOWN_DISTANCE and current_state != 'IDLE':
+                    new_state = 'IDLE'
+                    await zone_engine.update_zone_state(session, token_address, zone_price, new_state, None, current_price)
+
+
+                # اگر وضعیت تغییر کرده و باید سیگنال ارسال شود
+                if new_state != current_state and signal_type:
+                    await zone_engine.update_zone_state(session, token_address, zone_price, new_state, signal_type, current_price)
+                    
+                    return {
+                        'signal': signal_type,
+                        'strength': zone.get('score', 5.0) + 2.0, # امتیاز پایه + امتیاز تغییر وضعیت
+                        'level': zone_price,
+                        'zone_score': zone.get('score', 0)
+                    }
+        return None # هیچ سیگنال جدیدی یافت نشد
+
     def volume_surge(self, df: pd.DataFrame, multiplier: float = 3.0) -> Optional[Dict]:
-        """Detect sudden volume surge"""
+        """سیگنال جهش حجم (این استراتژی بدون تغییر باقی می‌ماند)"""
         if len(df) < 10:
             return None
-            
+        
         avg_volume = df['volume'].iloc[-10:-1].mean()
+        if avg_volume == 0: return None # جلوگیری از تقسیم بر صفر
+        
         current_volume = df['volume'].iloc[-1]
         
         if current_volume > avg_volume * multiplier:
             return {
                 'signal': 'volume_surge',
-                'strength': min(current_volume / avg_volume, 10.0),
-                'volume_ratio': current_volume / avg_volume
-            }
-        return None
-    
-    def momentum_breakout(self, df: pd.DataFrame) -> Optional[Dict]:
-        """Detect momentum breakout above resistance"""
-        if len(df) < 20:
-            return None
-            
-        # Find recent high (resistance)
-        recent_high = df['high'].iloc[-20:].max()
-        current_price = df['close'].iloc[-1]
-        
-        # Check if current price broke above resistance
-        if current_price > recent_high * 1.02:  # 2% above recent high
-            # Confirm with volume
-            avg_volume = df['volume'].iloc[-10:-1].mean()
-            current_volume = df['volume'].iloc[-1]
-            
-            if current_volume > avg_volume * 1.5:  # Volume confirmation
-                return {
-                    'signal': 'momentum_breakout',
-                    'strength': min((current_price / recent_high - 1) * 50, 10.0),
-                    'breakout_level': recent_high
-                }
-        return None
-    
-    def support_bounce(self, df: pd.DataFrame) -> Optional[Dict]:
-        """Detect bounce from support level"""
-        if len(df) < 15:
-            return None
-            
-        # Find recent low (support)
-        recent_low = df['low'].iloc[-15:].min()
-        current_price = df['close'].iloc[-1]
-        
-        # Check if price is near support and showing bounce
-        distance_from_support = (current_price - recent_low) / recent_low
-        
-        if 0.005 < distance_from_support < 0.05:  # 0.5% to 5% above support
-            # Check for reversal candle pattern
-            last_candle_green = df['close'].iloc[-1] > df['open'].iloc[-1]
-            prev_candle_red = df['close'].iloc[-2] < df['open'].iloc[-2]
-            
-            if last_candle_green and prev_candle_red:
-                return {
-                    'signal': 'support_bounce',
-                    'strength': min((1 - distance_from_support) * 20, 10.0),
-                    'support_level': recent_low
-                }
-        return None
-    
-    def obv_uptrend(self, df: pd.DataFrame) -> Optional[Dict]:
-        """Detect OBV uptrend confirmation"""
-        if len(df) < 20:
-            return None
-    
-        # Calculate OBV (On Balance Volume)
-        obv = []
-        obv_val = 0
-    
-        for i in range(len(df)):
-            if i == 0:
-                obv_val = df['volume'].iloc[i]
-            else:
-                if df['close'].iloc[i] > df['close'].iloc[i-1]:
-                    obv_val += df['volume'].iloc[i]
-                elif df['close'].iloc[i] < df['close'].iloc[i-1]:
-                    obv_val -= df['volume'].iloc[i]
-            obv.append(obv_val)
-    
-        df_temp = df.copy()
-        df_temp['obv'] = obv
-    
-        # Check for OBV uptrend with price confirmation
-        obv_slope = (obv[-1] - obv[-10]) / 10  # OBV slope over 10 periods
-        price_making_higher_highs = df['high'].iloc[-1] > df['high'].iloc[-5]
-    
-        if obv_slope > 0 and price_making_higher_highs:
-            strength = min(abs(obv_slope) / max(obv[-10:]) * 100, 10.0)
-            return {
-                'signal': 'obv_uptrend',
-                'strength': strength,
-                'obv_slope': obv_slope
+                'strength': min(current_volume / (avg_volume or 1), 10.0),
+                'volume_ratio': current_volume / (avg_volume or 1)
             }
         return None
 
-    def three_white_soldiers(self, df: pd.DataFrame) -> Optional[Dict]:
-        """Detect Three White Soldiers candlestick pattern"""
-        if len(df) < 5:
-            return None
-    
-        # Get last 3 candles
-        last_3 = df.tail(3)
-    
-        # Check for 3 consecutive green candles
-        all_green = all(candle['close'] > candle['open'] for _, candle in last_3.iterrows())
-    
-        if not all_green:
-            return None
-    
-        # Check for ascending highs and closes
-        ascending_closes = (
-            last_3.iloc[1]['close'] > last_3.iloc[0]['close'] and
-            last_3.iloc[2]['close'] > last_3.iloc[1]['close']
-        )
-    
-        ascending_highs = (
-            last_3.iloc[1]['high'] > last_3.iloc[0]['high'] and  
-            last_3.iloc[2]['high'] > last_3.iloc[1]['high']
-        )
-    
-        # Check for decent body sizes (not just wicks)
-        min_body_size = 0.005  # 0.5% minimum body
-        strong_bodies = all(
-            abs(candle['close'] - candle['open']) / candle['open'] > min_body_size
-            for _, candle in last_3.iterrows()
-        )
-    
-        if ascending_closes and ascending_highs and strong_bodies:
-            # Calculate strength based on momentum
-            total_gain = (last_3.iloc[-1]['close'] - last_3.iloc[0]['open']) / last_3.iloc[0]['open']
-            strength = min(total_gain * 200, 10.0)  # Scale to 0-10
-        
-            return {
-                'signal': 'three_white_soldiers',
-                'strength': max(strength, 3.0),  # Minimum strength 3 for this pattern
-                'total_gain': total_gain
-            }
-    
-        return None
-
-    def evaluate_all_strategies(self, df: pd.DataFrame) -> List[Dict]:
-        """Evaluate all trading strategies"""
+    # تابع اصلی که تمام استراتژی‌ها را فراخوانی می‌کند
+    async def evaluate_all_strategies(self, df: pd.DataFrame, zones: List[Dict], token_address: str) -> List[Dict]:
+        """تمام استراتژی‌های معاملاتی را ارزیابی می‌کند."""
         strategies = []
         
-        # Test each strategy
+        # 1. اجرای استراتژی هوشمند نواحی
+        zone_signal = await self.stateful_zone_strategy(df, zones, token_address)
+        if zone_signal:
+            strategies.append(zone_signal)
+            
+        # 2. اجرای استراتژی جهش حجم
         volume_result = self.volume_surge(df)
         if volume_result:
             strategies.append(volume_result)
             
-        momentum_result = self.momentum_breakout(df)
-        if momentum_result:
-            strategies.append(momentum_result)
-            
-        support_result = self.support_bounce(df)
-        if support_result:
-            strategies.append(support_result)
+        # استراتژی‌های دیگر مانند obv_uptrend و three_white_soldiers را می‌توانید در اینجا اضافه کنید
         
-        # Sort by strength
         strategies.sort(key=lambda x: x['strength'], reverse=True)
         return strategies
-
-        obv_result = self.obv_uptrend(df)
-        if obv_result:
-            strategies.append(obv_result)
-
-        soldiers_result = self.three_white_soldiers(df)
-        if soldiers_result:
-            strategies.append(soldiers_result)
 
 trading_strategies = TradingStrategies()
