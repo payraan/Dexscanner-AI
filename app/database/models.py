@@ -60,3 +60,18 @@ class ZoneState(Base):
    last_price = Column(Float)
    created_at = Column(DateTime, default=datetime.utcnow)
    updated_at = Column(DateTime, default=datetime.utcnow)
+
+class FibonacciState(Base):
+    __tablename__ = 'fibonacci_states'
+    
+    id = Column(Integer, primary_key=True)
+    token_address = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)
+    high_point = Column(Float, nullable=False)
+    low_point = Column(Float, nullable=False)
+    target1_price = Column(Float)
+    target2_price = Column(Float)
+    target3_price = Column(Float)
+    status = Column(String, default='ACTIVE')
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
