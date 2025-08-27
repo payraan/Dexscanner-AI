@@ -3,11 +3,14 @@ from typing import Optional, Dict, List, Tuple
 from app.scanner.data_provider import data_provider
 from app.scanner.strategies import trading_strategies
 from app.scanner.zone_detector import zone_detector
-from app.scanner.timeframe_selector import get_dynamic_timeframe, get_timeframe_from_data
+from app.scanner.timeframe_selector import get_timeframe_from_data # تابع هوشمند شما حفظ شده است
 from app.database.session import get_db
 from app.database.models import Token
 from sqlalchemy import select
 import logging
+
+# --- افزودن import های جدید ---
+from app.scanner.fibonacci_engine import fibonacci_engine
 
 logger = logging.getLogger(__name__)
 
@@ -17,25 +20,20 @@ class AnalysisEngine:
 
     async def analyze_token(self, token_data: Dict) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
         """
-        Analyze a single token for trading signals using smart dynamic timeframe selection.
-        این نسخه بهینه شده ابتدا سن واقعی توکن را از داده‌ها تخمین می‌زند.
+        Analyze a single token for trading signals using smart dynamic timeframe selection
+        and stateful Fibonacci engine.
         """
-
-        # فیلتر حجم اولیه
         if token_data['volume_24h'] < self.min_volume_threshold:
             logger.debug(f"Skipping {token_data['symbol']} - Volume too low: ${token_data['volume_24h']:,.0f}")
             return None, None
 
         try:
             # مرحله 1: دریافت داده‌های اولیه برای تخمین سن توکن
-            # از 1-hour استفاده می‌کنیم که هم سریع است و هم برای تخمین سن کافی است
-            logger.info(f"Fetching initial data for {token_data['symbol']} to estimate age...")
-            
             initial_df = await data_provider.fetch_ohlcv(
                 token_data['pool_id'],
                 timeframe="hour",
                 aggregate="1",
-                limit=200  # 200 کندل = حدود 8 روز، کافی برای تخمین
+                limit=200
             )
 
             if initial_df is None or initial_df.empty or len(initial_df) < 5:
@@ -45,43 +43,23 @@ class AnalysisEngine:
             # مرحله 2: تعیین timeframe بهینه بر اساس داده‌های واقعی
             timeframe, aggregate = get_timeframe_from_data(initial_df)
             
-            # لاگ برای دیباگ
-            if 'timestamp' in initial_df.columns and len(initial_df) >= 2:
-                age_hours = (initial_df['timestamp'].iloc[-1] - initial_df['timestamp'].iloc[0]) / 3600
-                age_days = age_hours / 24
-                logger.info(
-                    f"Token {token_data['symbol']} age: {age_days:.1f} days ({age_hours:.1f} hours) "
-                    f"→ Selected timeframe: {aggregate}{timeframe[0].upper()}"
-                )
-            else:
-                logger.info(f"Selected timeframe for {token_data['symbol']}: {aggregate}{timeframe[0].upper()}")
+            # لاگ کردن تایم‌فریم انتخابی
+            age_hours = (initial_df['timestamp'].iloc[-1] - initial_df['timestamp'].iloc[0]) / 3600
+            logger.info(
+                f"Token {token_data['symbol']} age: {age_hours/24:.1f} days "
+                f"→ Selected timeframe: {aggregate}{timeframe[0].upper()}"
+            )
 
-            # مرحله 3: اگر timeframe انتخابی با timeframe اولیه متفاوت است، داده جدید بگیر
+            # مرحله 3: دریافت داده‌های نهایی با timeframe بهینه
             if timeframe == "hour" and aggregate == "1":
-                # از همان داده‌های اولیه استفاده می‌کنیم
                 df = initial_df
-                logger.info(f"Using initial hourly data for {token_data['symbol']}")
             else:
-                # داده‌های جدید با timeframe بهینه دریافت می‌کنیم
-                logger.info(f"Fetching optimized {aggregate}{timeframe[0].upper()} data for {token_data['symbol']}...")
-                
-                # تعداد کندل مناسب برای هر timeframe
-                if timeframe == "minute":
-                    if aggregate == "1":
-                        limit_count = 300  # 5 ساعت داده
-                    elif aggregate == "5":
-                        limit_count = 200  # حدود 17 ساعت
-                    else:  # 15 minute
-                        limit_count = 150  # حدود 37 ساعت
-                elif timeframe == "hour":
-                    if aggregate == "4":
-                        limit_count = 100  # حدود 17 روز
-                    elif aggregate == "12":
-                        limit_count = 80   # حدود 40 روز
-                    else:
-                        limit_count = 100
-                else:  # day
-                    limit_count = 60  # 2 ماه
+                # تعیین تعداد کندل مناسب برای هر تایم‌فریم
+                limit_map = {
+                    ("minute", "1"): 300, ("minute", "5"): 200, ("minute", "15"): 150,
+                    ("hour", "4"): 100, ("hour", "12"): 80, ("day", "1"): 60
+                }
+                limit_count = limit_map.get((timeframe, aggregate), 100)
                 
                 df = await data_provider.fetch_ohlcv(
                     token_data['pool_id'],
@@ -90,30 +68,28 @@ class AnalysisEngine:
                     limit=limit_count
                 )
 
-            # بررسی کیفیت داده‌های نهایی
             if df is None or df.empty or len(df) < 20:
-                logger.warning(f"Insufficient data for analysis: {token_data['symbol']} - Only {len(df) if df is not None else 0} candles")
+                logger.warning(f"Insufficient final data for analysis: {token_data['symbol']}")
                 return None, None
 
-            # مرحله 4: انجام تحلیل تکنیکال
-            logger.debug(f"Analyzing {token_data['symbol']} with {len(df)} candles of {aggregate}{timeframe[0].upper()} data")
-            
-            # محاسبه support/resistance zones
-            zones = zone_detector.find_support_resistance_zones(df)
-            logger.debug(f"Found {len(zones)} support/resistance zones for {token_data['symbol']}")
+            # --- مرحله 4: یکپارچه‌سازی با موتور فیبوناچی ---
+            fibo_state = None
+            async for session in get_db(): # دریافت session دیتابیس
+                fibo_state = await fibonacci_engine.get_or_create_state(
+                    session, token_data['address'], f"{timeframe}_{aggregate}", df
+                )
 
-            # اجرای استراتژی‌های معاملاتی
+            # مرحله 5: انجام تحلیل تکنیکال
+            zones = zone_detector.find_support_resistance_zones(df)
             detected_strategies = trading_strategies.evaluate_all_strategies(df)
-            
-            # Fallback برای توکن‌های پرحجم بدون سیگنال
+
             if not detected_strategies and token_data['volume_24h'] > 1000000:
-                detected_strategies = [{
+                detected_strategies.append({
                     'signal': 'high_volume',
                     'strength': min(token_data['volume_24h'] / 1000000, 10.0)
-                }]
-                logger.info(f"High volume fallback signal for {token_data['symbol']}")
+                })
 
-            # مرحله 5: آماده‌سازی و بازگشت نتیجه
+            # مرحله 6: آماده‌سازی و بازگشت نتیجه
             if detected_strategies:
                 strongest = detected_strategies[0]
                 
@@ -125,33 +101,34 @@ class AnalysisEngine:
                     'strength': strongest['strength'],
                     'volume_24h': token_data['volume_24h'],
                     'price': token_data['price_usd'],
-                    'timeframe': f"{aggregate}{timeframe[0].upper()}",  # فرمت بهتر: 5M, 1H, etc
+                    'timeframe': f"{aggregate}{timeframe[0].upper()}",
                     'all_signals': [s['signal'] for s in detected_strategies],
                     'zones': zones,
-                    'candle_count': len(df)  # برای دیباگ
+                    # --- افزودن داده‌های فیبوناچی به خروجی ---
+                    'fibonacci_state': {
+                        'high': fibo_state.high_point,
+                        'low': fibo_state.low_point,
+                        'target1': fibo_state.target1_price,
+                        'target2': fibo_state.target2_price,
+                        'target3': fibo_state.target3_price,
+                        'status': fibo_state.status
+                    } if fibo_state else None
                 }
                 
-                logger.info(
-                    f"Signal found for {token_data['symbol']}: "
-                    f"{strongest['signal']} (strength: {strongest['strength']:.1f}) "
-                    f"on {aggregate}{timeframe[0].upper()} timeframe"
-                )
-                
+                logger.info(f"Signal found for {signal_data['token']}: {signal_data['signal_type']}")
                 return signal_data, df
-            else:
-                logger.debug(f"No signals detected for {token_data['symbol']}")
 
         except Exception as e:
-            logger.error(f"Error analyzing {token_data['symbol']}: {str(e)}", exc_info=True)
+            logger.error(f"Error analyzing {token_data.get('symbol', 'Unknown')}: {e}", exc_info=True)
         
         return None, None
 
+# بخش health check شما بدون تغییر باقی می‌ماند
     async def quick_health_check(self, token_data: Dict) -> bool:
         """
         بررسی سریع سلامت توکن قبل از تحلیل کامل
         """
         try:
-            # دریافت چند کندل اخیر
             df = await data_provider.fetch_ohlcv(
                 token_data['pool_id'],
                 timeframe="minute",
@@ -162,7 +139,6 @@ class AnalysisEngine:
             if df is None or df.empty:
                 return False
             
-            # بررسی rug pull (افت بیش از 80% در 20 کندل اخیر)
             max_price = df['high'].max()
             current_price = df['close'].iloc[-1]
             
@@ -172,9 +148,8 @@ class AnalysisEngine:
                     logger.warning(f"Potential rug pull detected for {token_data['symbol']}: {drop_ratio:.1%} drop")
                     return False
             
-            # بررسی نقدینگی (حداقل نوسان قیمت)
             price_std = df['close'].std()
-            if price_std < current_price * 0.001:  # کمتر از 0.1% نوسان
+            if price_std < current_price * 0.001:
                 logger.warning(f"Dead token detected {token_data['symbol']}: No price movement")
                 return False
             
@@ -182,6 +157,6 @@ class AnalysisEngine:
             
         except Exception as e:
             logger.error(f"Health check error for {token_data['symbol']}: {e}")
-            return True  # در صورت خطا، اجازه تحلیل می‌دهیم
+            return True
 
 analysis_engine = AnalysisEngine()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, BigInteger, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, BigInteger, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 
@@ -62,10 +62,10 @@ class ZoneState(Base):
    updated_at = Column(DateTime, default=datetime.utcnow)
 
 class FibonacciState(Base):
-    __tablename__ = 'fibonacci_states'
-    
+    __tablename__ = 'fibonacci_state'  # تغییر به مفرد
+
     id = Column(Integer, primary_key=True)
-    token_address = Column(String, nullable=False)
+    token_address = Column(String, nullable=False, index=True) # افزودن ایندکس
     timeframe = Column(String, nullable=False)
     high_point = Column(Float, nullable=False)
     low_point = Column(Float, nullable=False)
@@ -74,4 +74,7 @@ class FibonacciState(Base):
     target3_price = Column(Float)
     status = Column(String, default='ACTIVE')
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # این خط بسیار مهم است و باید اضافه شود
+    __table_args__ = (UniqueConstraint('token_address', 'timeframe', name='_token_timeframe_uc'),)
