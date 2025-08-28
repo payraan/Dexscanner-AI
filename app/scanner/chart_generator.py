@@ -127,17 +127,11 @@ class ChartGenerator:
         ax.text(0.5, 0.5, 'NarmoonAI', transform=ax.transAxes, fontsize=40,
                 color='gray', alpha=0.15, ha='center', va='center', style='italic')
 
-    def _add_price_box(self, ax, df):
-        """اضافه کردن کادر قیمت فعلی."""
-        current_price = df['close'].iloc[-1]
-        ax.text(0.02, 0.98, f'Price: ${current_price:.8f}', transform=ax.transAxes, 
-                fontsize=12, color='white', ha='left', va='top',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
-
     def _format_chart(self, ax, token_symbol, signal_data, df, fib_state):
         """فرمت نهایی چارت با مقیاس‌بندی هوشمند."""
         timeframe_str = signal_data.get('timeframe', '')
-        ax.set_title(f"{token_symbol} - {timeframe_str} Chart", color='white', fontsize=14, fontweight='bold', loc='left')
+        current_price = df['close'].iloc[-1]
+        ax.set_title(f"{token_symbol} - {timeframe_str} Chart - Price: ${current_price:.8f}", color='white', fontsize=14, fontweight='bold', loc='left')
         ax.grid(True, alpha=0.15, color='#444444')
         
         ax.yaxis.tick_right()
