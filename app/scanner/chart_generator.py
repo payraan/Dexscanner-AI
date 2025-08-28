@@ -34,7 +34,8 @@ class ChartGenerator:
         for i, (level, price) in enumerate(retracement_levels.items()):
             ax.axhline(y=price, color=fib_colors[i % len(fib_colors)], linestyle='--', linewidth=1, alpha=0.7)
             ax.text(ax.get_xlim()[1] + 0.01 * (ax.get_xlim()[1] - ax.get_xlim()[0]), price, f'Fib {level:.3f}', 
-                    color=fib_colors[i % len(fib_colors)], va='center', ha='left', fontsize=9)
+                    color='white', va='center', ha='left', fontsize=9,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7, edgecolor=fib_colors[i % len(fib_colors)], linewidth=1))
 
         # رسم تارگت‌ها (Extension)
         target_colors = ['#4caf50', '#8bc34a', '#cddc39']
@@ -47,7 +48,8 @@ class ChartGenerator:
             if price:
                 ax.axhline(y=price, color=target_colors[i % len(target_colors)], linestyle=':', linewidth=1.5, alpha=0.9)
                 ax.text(ax.get_xlim()[1] + 0.01 * (ax.get_xlim()[1] - ax.get_xlim()[0]), price, f'Target {level}', 
-                        color=target_colors[i % len(target_colors)], va='center', ha='left', fontsize=10, fontweight='bold')
+                        color='white', va='center', ha='left', fontsize=10, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7, edgecolor=target_colors[i % len(target_colors)], linewidth=1.5))
 
     def _draw_zones(self, ax, zones: List[Dict]):
         """نواحی حمایت و مقاومت را رسم می‌کند."""
@@ -122,14 +124,14 @@ class ChartGenerator:
 
     def _add_watermark(self, ax):
         """اضافه کردن واترمارک."""
-        ax.text(0.98, 0.02, 'NarmoonAI', transform=ax.transAxes, fontsize=18,
-                color='gray', alpha=0.3, ha='right', va='bottom', style='italic')
+        ax.text(0.5, 0.5, 'NarmoonAI', transform=ax.transAxes, fontsize=40,
+                color='gray', alpha=0.15, ha='center', va='center', style='italic')
 
     def _add_price_box(self, ax, df):
         """اضافه کردن کادر قیمت فعلی."""
         current_price = df['close'].iloc[-1]
-        ax.text(0.98, 0.08, f'Price: ${current_price:.8f}', transform=ax.transAxes, 
-                fontsize=12, color='white', ha='right', va='bottom',
+        ax.text(0.02, 0.98, f'Price: ${current_price:.8f}', transform=ax.transAxes, 
+                fontsize=12, color='white', ha='left', va='top',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
 
     def _format_chart(self, ax, token_symbol, signal_data, df, fib_state):
