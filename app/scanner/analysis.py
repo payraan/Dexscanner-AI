@@ -6,7 +6,7 @@ from app.scanner.zone_detector import zone_detector
 from app.scanner.timeframe_selector import get_dynamic_timeframe # ما از این تابع استفاده خواهیم کرد
 from app.database.session import get_db
 from app.scanner.fibonacci_engine import fibonacci_engine
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class AnalysisEngine:
             # --- مرحله ۲: انتخاب تایم‌فریم بهینه بر اساس تاریخ دقیق ---
             timeframe, aggregate = get_dynamic_timeframe(launch_date)
             
-            age_days = (datetime.utcnow() - launch_date).days
+            age_days = (datetime.now(timezone.utc) - launch_date).days
             logger.info(f"Token {token_data.get('symbol')} is {age_days} days old -> Selected timeframe: {aggregate}{timeframe[0].upper()}")
 
             # مرحله ۳: دریافت داده‌های قیمتی با تایم‌فریم صحیح و تعداد کندل مناسب
