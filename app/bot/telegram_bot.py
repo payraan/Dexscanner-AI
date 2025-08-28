@@ -1,6 +1,7 @@
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InputFile
+from aiogram.types import Message, CallbackQuery, InputFile, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
 from aiogram.filters import Command
+from aiogram.utils.media_group import MediaGroupBuilder
 from app.core.config import settings
 from app.services.ai_analyzer import ai_analyzer
 from app.bot.middlewares import SubscriptionMiddleware
@@ -11,6 +12,16 @@ import io
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_main_keyboard():
+    """ایجاد کیبورد اصلی ربات"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📈 نتایج سیگنال‌ها")],
+            [KeyboardButton(text="💡 راهنما"), KeyboardButton(text="📞 پشتیبانی")]
+        ],
+        resize_keyboard=True
+    )
 
 class TelegramBot:
     def __init__(self):
@@ -24,6 +35,13 @@ class TelegramBot:
         """Setup message and callback handlers"""
         self.dp.message.register(self.start_handler, Command("start"))
         self.dp.message.register(self.help_handler, Command("help"))
+        self.dp.message.register(self.support_handler, Command("support"))
+        self.dp.message.register(self.results_handler, Command("results"))
+
+        # اتصال دکمه‌های کیبورد به handler ها
+        self.dp.message.register(self.results_handler, F.text == "📈 نتایج سیگنال‌ها")
+        self.dp.message.register(self.help_handler, F.text == "💡 راهنما")
+        self.dp.message.register(self.support_handler, F.text == "📞 پشتیبانی")
         # Handler جدید برای دکمه AI
         self.dp.callback_query.register(self.ai_analysis_handler, F.data.startswith("ai_analyze_"))
         self.dp.message.register(self.activate_subscription_handler, Command("activatesub"))
@@ -106,7 +124,7 @@ class TelegramBot:
 
 💡 از دستور /help برای مشاهده راهنما استفاده کنید."""
 
-       await message.answer(welcome_message)
+       await message.answer(welcome_message, reply_markup=get_main_keyboard())
 
     async def help_handler(self, message: Message):
         """Handle /help command"""
@@ -145,6 +163,41 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"AI analysis error: {e}")
             await callback.message.reply("❌ خطا در تحلیل هوش مصنوعی.")
+
+    async def support_handler(self, message: Message):
+        """Handle /support command"""
+        support_text = "📞 برای ارتباط با پشتیبانی می‌توانید به آیدی زیر پیام دهید:\n\n@Narmoonsupport"
+        await message.answer(support_text)
+
+    async def results_handler(self, message: Message):
+        """Handle /results command and button click"""
+        await message.answer("⏳ در حال دریافت آخرین نتایج موفق ربات...")
+    
+        from app.database.session import get_db
+        from app.database.models import SignalResult
+        from sqlalchemy import select
+    
+        async for session in get_db():
+            results = await session.execute(
+                select(SignalResult)
+                .where(SignalResult.status == 'CAPTURED', SignalResult.is_rugged == False)
+                .order_by(SignalResult.captured_at.desc())
+                .limit(5)
+            )
+            signal_results = results.scalars().all()
+    
+        if not signal_results:
+            await message.answer("😔 متاسفانه نتیجه موفقی برای نمایش در 7 روز گذشته یافت نشد.")
+            return
+
+        for result in signal_results:
+            try:
+                media_group = MediaGroupBuilder(caption=f"📊 توکن: ${result.token_symbol}\n🚀 رشد: +{result.profit_percentage:.2f}%\n⏱️ ثبت شده در: {result.captured_at.strftime('%Y-%m-%d')}")
+                media_group.add(type="photo", media=result.before_chart_file_id)
+                media_group.add(type="photo", media=result.after_chart_file_id)
+                await message.answer_media_group(media=media_group.build())
+            except Exception as e:
+                logger.error(f"Error sending media group for result {result.id}: {e}")
 
     async def start_polling(self):
         """Start bot polling"""

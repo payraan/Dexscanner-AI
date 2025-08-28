@@ -6,6 +6,7 @@ from app.bot.telegram_bot import telegram_bot
 from app.scanner.scanner import token_scanner
 from app.services.redis_client import redis_client
 from app.core.logging_config import setup_logging
+from app.services.result_tracker import run_tracking_loop, run_cleanup_loop
 import asyncio
 
 @asynccontextmanager
@@ -36,6 +37,11 @@ async def lifespan(app: FastAPI):
     # Start token scanner
     asyncio.create_task(token_scanner.start_scanning())
     print("✅ Token scanner started")
+    # Start result tracking jobs
+    asyncio.create_task(run_tracking_loop())
+    asyncio.create_task(run_cleanup_loop())
+    print("✅ Result tracking jobs started")
+
 
     yield
 

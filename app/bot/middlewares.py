@@ -14,9 +14,10 @@ class SubscriptionMiddleware(BaseMiddleware):
    ) -> Any:
        # Skip middleware for admin commands and /start
        if isinstance(event, Message) and event.text:
-           if event.text.startswith('/activatesub') or event.text.startswith('/start') or event.text.startswith('/help'):
-               return await handler(event, data)
-       
+           public_commands = ['/start', '/help', '/support', '/results', '📈 نتایج سیگنال‌ها', '💡 راهنما', '📞 پشتیبانی']
+           if any(event.text.startswith(cmd) for cmd in public_commands):
+               return await handler(event, data) 
+      
        user_id = event.from_user.id
 
        # Check subscription in database

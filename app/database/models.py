@@ -62,10 +62,10 @@ class ZoneState(Base):
    updated_at = Column(DateTime, default=datetime.utcnow)
 
 class FibonacciState(Base):
-    __tablename__ = 'fibonacci_state'  # تغییر به مفرد
+    __tablename__ = 'fibonacci_state'
 
     id = Column(Integer, primary_key=True)
-    token_address = Column(String, nullable=False, index=True) # افزودن ایندکس
+    token_address = Column(String, nullable=False, index=True)
     timeframe = Column(String, nullable=False)
     high_point = Column(Float, nullable=False)
     low_point = Column(Float, nullable=False)
@@ -76,5 +76,27 @@ class FibonacciState(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # این خط بسیار مهم است و باید اضافه شود
     __table_args__ = (UniqueConstraint('token_address', 'timeframe', name='_token_timeframe_uc'),)
+
+class SignalResult(Base):
+    __tablename__ = 'signal_results'
+
+    id = Column(Integer, primary_key=True)
+    alert_id = Column(Integer, ForeignKey('alerts.id'), nullable=False, unique=True)
+    token_address = Column(String, nullable=False, index=True)
+    token_symbol = Column(String, nullable=True)
+    
+    signal_price = Column(Float, nullable=False)
+    peak_price = Column(Float, nullable=True)
+    profit_percentage = Column(Float, default=0.0)
+
+    before_chart_file_id = Column(String, nullable=False)
+    after_chart_file_id = Column(String, nullable=True)
+
+    status = Column(String, default='TRACKING', index=True)
+    is_rugged = Column(Boolean, default=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    captured_at = Column(DateTime, nullable=True)
+
+    alert = relationship("Alert")

@@ -3,7 +3,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboar
 from app.core.config import settings
 from app.scanner.chart_generator import chart_generator
 from app.database.session import get_db
-from app.database.models import User, Alert, Token
+from app.database.models import User, Alert, Token, SignalResult
 from sqlalchemy import select
 from typing import Dict
 import logging
@@ -141,6 +141,37 @@ class TelegramSender:
                         timestamp=datetime.utcnow()
                     )
                     session.add(new_alert)
+                    await session.flush()  # برای گرفتن ID هشدار جدید
+                    
+                    # بخش جدید: ایجاد رکورد ردیابی
+                    if new_alert and new_alert.id and sent_message_id:
+                        try:
+                            # ارسال موقت به کانال ادمین برای گرفتن file_id
+                            forward_msg = await self.bot.forward_message(
+                                chat_id=settings.ADMIN_CHANNEL_ID,
+                                from_chat_id=subscribed_users[0].id if subscribed_users else settings.CHAT_ID,
+                                message_id=sent_message_id
+                            )
+                            
+                            if forward_msg.photo:
+                                before_file_id = forward_msg.photo[-1].file_id
+                                
+                                new_tracker = SignalResult(
+                                    alert_id=new_alert.id,
+                                    token_address=signal.get('address'),
+                                    token_symbol=signal.get('token'),
+                                    signal_price=signal.get('price', 0),
+                                    before_chart_file_id=before_file_id,
+                                    status='TRACKING'
+                                )
+                                session.add(new_tracker)
+                                logger.info(f"Started tracking signal for {signal.get('token')}")
+                                
+                            # حذف پیام فوروارد شده
+                            await self.bot.delete_message(settings.ADMIN_CHANNEL_ID, forward_msg.message_id)
+                        except Exception as e:
+                            logger.error(f"Failed to create tracker: {e}")
+                    
                     await session.commit()
                     break
 

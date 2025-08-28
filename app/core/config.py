@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     
     # Admin
     ADMIN_IDS: str = ""
+    ADMIN_CHANNEL_ID: str = ""  
     
     @property
     def admin_list(self) -> List[int]:
