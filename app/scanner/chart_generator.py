@@ -84,7 +84,7 @@ class ChartGenerator:
             self._draw_fibonacci_levels(ax, fib_state)
 
             self._add_watermark(ax)
-            self._add_price_box(ax, df)
+            # self._add_price_box(ax, df)
             self._format_chart(ax, token_symbol, signal_data, df, fib_state)
 
             buffer = io.BytesIO()
