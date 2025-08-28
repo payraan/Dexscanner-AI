@@ -62,35 +62,51 @@ class TelegramBot:
             await message.answer("استفاده: /activatesub USER_ID [DAYS]")
 
     async def start_handler(self, message: Message):
-        """Handle /start command and register new users"""
-        user_id = message.from_user.id
-    
-        # Register user in database
-        from app.database.session import get_db
-        from app.database.models import User
-        from sqlalchemy import select
-        from datetime import datetime
-    
-        async for session in get_db():
-            result = await session.execute(
-                select(User).where(User.id == user_id)
-            )
-            user = result.scalar_one_or_none()
-        
-            if not user:
-                new_user = User(
-                    id=user_id,
-                    is_subscribed=False,
-                    created_at=datetime.utcnow()
-                )
-                session.add(new_user)
-                await session.commit()
-    
-        await message.answer(
-            "🚀 خوش آمدید به DexScanner Bot!\n\n"
-            "برای استفاده از ربات، نیاز به اشتراک فعال دارید.\n"
-            "برای فعال‌سازی با ادمین تماس بگیرید."
-        )
+       """Handle /start command and register new users"""
+       user_id = message.from_user.id
+       user_name = message.from_user.first_name or "کاربر"
+       
+       # Register user in database
+       from app.database.session import get_db
+       from app.database.models import User
+       from sqlalchemy import select
+       from datetime import datetime, timezone
+       
+       async for session in get_db():
+           result = await session.execute(
+               select(User).where(User.id == user_id)
+           )
+           user = result.scalar_one_or_none()
+       
+           if not user:
+               new_user = User(
+                   id=user_id,
+                   is_subscribed=False,
+                   created_at=datetime.now(timezone.utc)
+               )
+               session.add(new_user)
+               await session.commit()
+           
+       welcome_message = f"""🎉 {user_name} عزیز، به DexScanner Bot خوش آمدید!
+
+🤖 DexScanner AI ربات یک ابزار قدرتمند برای تحلیل و سیگنال حرفه‌ای توکن‌ها در فضای دکس با قابلیت‌های بی‌نظیر:
+
+📡 اسکن لحظه‌ای: شناسایی سریع و هوشمند توکن‌های محبوب و جدید در صرافی‌های غیرمتمرکز
+
+📊 تحلیل تکنیکال: استفاده از استراتژی‌های معاملاتی پیشرفته مانند شکست مومنتوم و جهش حجم
+
+🧠 تحلیل با هوش مصنوعی: بررسی تخصصی نمودارها با هوش مصنوعی نارموون و ارائه سناریوهای دقیق معاملاتی
+
+📈 نمودارهای حرفه‌ای: چارت‌های کندل استیک با سطوح فیبوناچی و نواحی حمایت/مقاومت
+
+⚡️ سیگنال‌های بلادرنگ: دریافت فوری سیگنال‌های خرید با نقاط ورود و خروج مشخص
+
+🔔 برای فعال‌سازی اشتراک خود، به پشتیبان پیام دهید:
+👈 @Narmoonsupport
+
+💡 از دستور /help برای مشاهده راهنما استفاده کنید."""
+
+       await message.answer(welcome_message)
 
     async def help_handler(self, message: Message):
         """Handle /help command"""
@@ -122,7 +138,6 @@ class TelegramBot:
                 # Send analysis as reply
                 await callback.message.reply(
                     f"🧠 تحلیل هوش مصنوعی:\n\n{analysis}",
-                    parse_mode='Markdown'
                 )
             else:
                 await callback.message.reply("❌ چارت برای تحلیل یافت نشد.")
