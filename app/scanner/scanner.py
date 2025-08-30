@@ -8,6 +8,7 @@ from app.scanner.telegram_sender import telegram_sender
 from app.services.cooldown_service import cooldown_service
 from app.services.token_service import token_service
 from app.scanner.token_health import token_health_checker
+from app.services.bitquery_service import bitquery_service
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,29 @@ class TokenScanner:
                 
             healthy_tokens += 1
             
+            # On-chain analysis filter (only for top tokens to save API)
+            if healthy_tokens <= 5:  # Only analyze first 5 healthy tokens
+                try:
+                    holder_stats = await bitquery_service.get_holder_stats(token['address'])
+                    if holder_stats:
+                        # Skip if high concentration
+                        if holder_stats['top_10_concentration'] > 60:
+                            logger.warning(f"Skipping {token['symbol']} - High concentration: {holder_stats['top_10_concentration']}%")
+                            continue
+                        
+                        # Add on-chain data to token for later use
+                        token['holder_stats'] = holder_stats
+                        
+                        # Optional: Get liquidity stats for very promising tokens
+                        if holder_stats['top_10_concentration'] < 30:
+                            liquidity_stats = await bitquery_service.get_liquidity_stats(token['address'])
+                            if liquidity_stats:
+                                token['liquidity_stats'] = liquidity_stats
+                                
+                except Exception as e:
+                    logger.error(f"Bitquery analysis failed for {token['symbol']}: {e}")
+                    # Continue anyway if Bitquery fails
+
             # Get signal and DataFrame from analysis_engine
             signal, df = await analysis_engine.analyze_token(token)
             

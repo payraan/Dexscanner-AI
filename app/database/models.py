@@ -100,3 +100,15 @@ class SignalResult(Base):
     captured_at = Column(DateTime, nullable=True)
 
     alert = relationship("Alert")
+
+class SmartMoneyWallet(Base):
+    __tablename__ = 'smart_money_wallets'
+    
+    id = Column(Integer, primary_key=True)
+    address = Column(String, unique=True, nullable=False, index=True)
+    chain = Column(String, default='solana')
+    success_rate = Column(Float, default=0.0)
+    total_profits = Column(Float, default=0.0)
+    notes = Column(Text)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
