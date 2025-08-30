@@ -98,7 +98,8 @@ class TelegramSender:
             # Send to all subscribed users
             sent_count = 0
             sent_message_id = None
-            
+            before_file_id = None
+
             for user in subscribed_users:
                 try:
                     if chart_bytes:
@@ -121,16 +122,21 @@ class TelegramSender:
                             reply_to_message_id=reply_to_message_id
                         )
                     
+                    # ... (کد ارسال عکس) ...
+                    # Capture message_id AND file_id from the first successful send
                     if sent_count == 0:
                         sent_message_id = sent_message.message_id
+                        if sent_message.photo:
+                            # این روش صحیح برای گرفتن file_id است
+                            before_file_id = sent_message.photo[-1].file_id
                     
                     sent_count += 1
                 except Exception as e:
                     logger.error("Failed to send message to user", 
                                extra={'user_id': user.id, 'error': str(e)})
 
-            # Save alert with message_id for reply chain
-            if token_id and sent_message_id:
+            # Save alert and tracker record
+            if token_id and sent_message_id and before_file_id:
                 async for session in get_db():
                     new_alert = Alert(
                         token_id=token_id,
@@ -141,39 +147,22 @@ class TelegramSender:
                         timestamp=datetime.utcnow()
                     )
                     session.add(new_alert)
-                    await session.flush()  # برای گرفتن ID هشدار جدید
-                    
-                    # بخش جدید: ایجاد رکورد ردیابی
-                    if new_alert and new_alert.id and sent_message_id:
-                        try:
-                            # ارسال موقت به کانال ادمین برای گرفتن file_id
-                            forward_msg = await self.bot.forward_message(
-                                chat_id=settings.ADMIN_CHANNEL_ID,
-                                from_chat_id=subscribed_users[0].id if subscribed_users else settings.CHAT_ID,
-                                message_id=sent_message_id
-                            )
-                            
-                            if forward_msg.photo:
-                                before_file_id = forward_msg.photo[-1].file_id
-                                
-                                new_tracker = SignalResult(
-                                    alert_id=new_alert.id,
-                                    token_address=signal.get('address'),
-                                    token_symbol=signal.get('token'),
-                                    signal_price=signal.get('price', 0),
-                                    before_chart_file_id=before_file_id,
-                                    status='TRACKING'
-                                )
-                                session.add(new_tracker)
-                                logger.info(f"Started tracking signal for {signal.get('token')}")
-                                
-                            # حذف پیام فوروارد شده
-                            await self.bot.delete_message(settings.ADMIN_CHANNEL_ID, forward_msg.message_id)
-                        except Exception as e:
-                            logger.error(f"Failed to create tracker: {e}")
+                    await session.flush()  # Get the new alert's ID
+
+                    # Create the tracking record with the correctly obtained file_id
+                    new_tracker = SignalResult(
+                        alert_id=new_alert.id,
+                        token_address=signal.get('address'),
+                        token_symbol=signal.get('token'),
+                        signal_price=signal.get('price', 0),
+                        before_chart_file_id=before_file_id, # استفاده از file_id ذخیره شده
+                        status='TRACKING'
+                    )
+                    session.add(new_tracker)
+                    logger.info(f"Started tracking signal for {signal.get('token')} with file_id {before_file_id}")
                     
                     await session.commit()
-                    break
+                    break # Exit the session loop
 
             logger.info("Signal send process completed.", 
                        extra={'token_symbol': signal.get('token'), 'sent_count': sent_count, 'total_users': len(subscribed_users)})
