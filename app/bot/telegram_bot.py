@@ -180,8 +180,8 @@ class TelegramBot:
         async for session in get_db():
             results = await session.execute(
                 select(SignalResult)
-                .where(SignalResult.status == 'CAPTURED', SignalResult.is_rugged == False)
-                .order_by(SignalResult.captured_at.desc())
+                .where(SignalResult.tracking_status == 'SUCCESS', SignalResult.is_rugged == False)
+                .order_by(SignalResult.closed_at.desc())
                 .limit(5)
             )
             signal_results = results.scalars().all()
@@ -192,7 +192,7 @@ class TelegramBot:
 
         for result in signal_results:
             try:
-                media_group = MediaGroupBuilder(caption=f"📊 توکن: ${result.token_symbol}\n🚀 رشد: +{result.profit_percentage:.2f}%\n⏱️ ثبت شده در: {result.captured_at.strftime('%Y-%m-%d')}")
+                media_group = MediaGroupBuilder(caption=f"📊 توکن: ${result.token_symbol}\n🚀 رشد: +{result.peak_profit_percentage:.2f}%\n⏱️ ثبت شده در: {result.closed_at.strftime('%Y-%m-%d')}")
                 media_group.add(type="photo", media=result.before_chart_file_id)
                 media_group.add(type="photo", media=result.after_chart_file_id)
                 await message.answer_media_group(media=media_group.build())
