@@ -84,6 +84,16 @@ class FibonacciEngine:
         target2 = high_point + (price_range * (FIB_EXT_LEVELS['target2'] - 1.0))
         target3 = high_point + (price_range * (FIB_EXT_LEVELS['target3'] - 1.0))
 
+        # Check if state already exists
+        existing = await session.execute(
+            select(FibonacciState).where(
+                FibonacciState.token_address == token_address,
+                FibonacciState.timeframe == timeframe
+            )
+        )
+        if existing.scalar_one_or_none():
+            return None
+
         new_state = FibonacciState(
             token_address=token_address,
             timeframe=timeframe,

@@ -2,6 +2,7 @@ import pandas as pd
 from typing import List, Dict, Optional
 from app.database.models import Token
 from datetime import datetime, timedelta
+import pandas as pd
 
 # تعریف آستانه‌ها
 APPROACH_THRESHOLD = 0.025 # 2.5%
@@ -26,7 +27,7 @@ class EventEngine:
         
         # Event 1: Confirmed Breakout of a significant zone
         # This is an actionable, high-priority event.
-        breakout_event = self._check_confirmed_breakout(current_price, final_zones, token)
+        breakout_event = self._check_confirmed_breakout(current_price, final_zones, token, df)
         if breakout_event:
             events.append(breakout_event)
 
@@ -51,7 +52,7 @@ class EventEngine:
 
         return events
 
-    def _check_confirmed_breakout(self, current_price: float, zones: List[Dict], token: Token) -> Optional[Dict]:
+    def _check_confirmed_breakout(self, current_price: float, zones: List[Dict], token: Token, df: pd.DataFrame) -> Optional[Dict]:
         """
         Checks if the price has broken and CONFIRMED above a resistance zone.
         This is a simplified, more direct version of the previous stateful strategy.
