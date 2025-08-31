@@ -1,128 +1,105 @@
-import pandas as pd
-from typing import List, Dict, Optional
+from app.database.session import get_db
 from app.database.models import Token
-from datetime import datetime, timedelta
+from sqlalchemy import select, update
+from datetime import datetime, timedelta, timezone
+import logging
+from app.scanner.timeframe_selector import get_dynamic_timeframe # Import the helper function
 
-# تعریف آستانه‌ها
-APPROACH_THRESHOLD = 0.025 # 2.5%
-BREAKOUT_THRESHOLD = 0.01  # 1%
-VOLUME_MULTIPLIER = 5.0    # 5x average volume
+logger = logging.getLogger(__name__)
 
-class EventEngine:
-    """
-    Detects specific, high-impact trading events based on price action, zones, and volume.
-    This engine replaces the previous strategy-based approach.
-    """
-    
-    def detect_events(self, df: pd.DataFrame, final_zones: List[Dict], token: Token) -> List[Dict]:
+# Define token states
+STATE_WATCHING = "WATCHING"
+STATE_SIGNALED = "SIGNALED"
+STATE_COOLDOWN = "COOLDOWN"
+
+class TokenStateService:
+    def _get_dynamic_cooldown(self, launch_date: datetime) -> timedelta:
         """
-        The main function to detect all relevant events for a token in its current state.
+        Calculates the cooldown duration based on the token's age.
+        This logic is synchronized with the timeframe selector.
         """
-        if df.empty or len(df) < 10:
-            return []
-
-        events = []
-        current_price = df['close'].iloc[-1]
+        age = datetime.now(timezone.utc) - launch_date
         
-        # Event 1: Confirmed Breakout of a significant zone
-        # This is an actionable, high-priority event.
-        breakout_event = self._check_confirmed_breakout(df, current_price, final_zones, token)
-        if breakout_event:
-            events.append(breakout_event)
+        if age < timedelta(hours=12):       # Corresponds to 1m, 5m charts
+            return timedelta(minutes=15)
+        elif age < timedelta(days=1):       # Corresponds to 15m chart
+            return timedelta(minutes=30)
+        elif age < timedelta(days=3):       # Corresponds to 1h chart
+            return timedelta(hours=2)
+        elif age < timedelta(days=7):       # Corresponds to 4h chart
+            return timedelta(hours=6)
+        else:                               # Corresponds to 12h, 1d charts
+            return timedelta(hours=12)
 
-        # Event 2: Volume Explosion
-        # This event adds context and can increase the score of other events.
-        volume_event = self._check_volume_explosion(df)
-        if volume_event:
-            events.append(volume_event)
+    async def can_send_signal(self, token_address: str) -> bool:
+        """
+        Checks if a signal can be sent for a token based on its current state.
+        A signal can only be sent if the token is in the 'WATCHING' state.
+        """
+        async for session in get_db():
+            await self._reset_cooled_down_tokens(session)
+
+            result = await session.execute(
+                select(Token).where(Token.address == token_address)
+            )
+            token = result.scalar_one_or_none()
+
+            if not token:
+                return True
             
-        # Event 3: Approaching a Golden Zone
-        # This is a "heads-up" event, not an immediate signal.
-        approach_event = self._check_golden_zone_approach(current_price, final_zones)
-        if approach_event:
-            events.append(approach_event)
+            return token.state == STATE_WATCHING
 
-        # Event 4: Significant price surge since the last signal
-        # This is for sending updates on successful signals.
-        if token.state == "SIGNALED" and token.last_signal_price:
-            price_surge_event = self._check_price_surge(current_price, token.last_signal_price)
-            if price_surge_event:
-                events.append(price_surge_event)
-
-        return events
-
-    def _check_confirmed_breakout(self, df: pd.DataFrame, current_price: float, zones: List[Dict], token: Token) -> Optional[Dict]:
+    async def record_signal_sent(self, token_address: str, signal_price: float):
         """
-        Checks if the price has broken and CONFIRMED above a resistance zone.
-        We check the last 2 candles for confirmation.
+        Updates the token's state to SIGNALED and sets the cooldown period.
         """
-        if len(zones) == 0 or len(df) < 2:
-            return None
-            
-        resistance_zones = [z for z in zones if 'resistance' in z['type']]
-        if not resistance_zones:
-            return None
-        
-        strongest_resistance = resistance_zones[0]
-        zone_price = strongest_resistance['price']
-        
-        # Check if the last two candles have closed above the zone
-        last_close = current_price
-        prev_close = df['close'].iloc[-2]
+        async for session in get_db():
+            stmt = (
+                update(Token)
+                .where(Token.address == token_address)
+                .values(
+                    state=STATE_SIGNALED,
+                    last_signal_price=signal_price,
+                    last_state_change=datetime.utcnow()
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            logger.info(f"🧠 Token state updated to SIGNALED for {token_address}")
 
-        is_breakout = (
-            last_close > zone_price * (1 + BREAKOUT_THRESHOLD) and
-            prev_close > zone_price
+    async def _reset_cooled_down_tokens(self, session):
+        """
+        Finds tokens in SIGNALED/COOLDOWN state whose dynamic cooldown period has passed
+        and resets their state to WATCHING.
+        """
+        tokens_in_cooldown_result = await session.execute(
+            select(Token).where(Token.state.in_([STATE_SIGNALED, STATE_COOLDOWN]))
         )
-
-        if is_breakout and token.state == "WATCHING":
-            return {
-                "event_type": "BREAKOUT_CONFIRMED",
-                "strength": strongest_resistance.get('score', 5.0) + 2.0, # Bonus for confirmed breakout
-                "level": zone_price,
-                "details": f"Confirmed breakout above {'golden' if 'golden' in strongest_resistance['type'] else ''} resistance."
-            }
-        return None
-
-    def _check_volume_explosion(self, df: pd.DataFrame) -> Optional[Dict]:
-        """Detects a massive spike in volume."""
-        avg_volume = df['volume'].iloc[-20:-2].mean()
-        current_volume = df['volume'].iloc[-1]
-
-        if avg_volume > 0 and current_volume > avg_volume * VOLUME_MULTIPLIER:
-            return {
-                "event_type": "VOLUME_EXPLOSION",
-                "strength": min(current_volume / avg_volume, 10.0),
-                "details": f"Volume surged to {current_volume / avg_volume:.1f}x the recent average."
-            }
-        return None
+        tokens_in_cooldown = tokens_in_cooldown_result.scalars().all()
         
-    def _check_golden_zone_approach(self, current_price: float, zones: List[Dict]) -> Optional[Dict]:
-        """Checks if the price is getting very close to a powerful Golden Zone."""
-        golden_zones = [z for z in zones if 'golden' in z['type']]
-        if not golden_zones:
-            return None
+        tokens_to_reset_ids = []
+        now = datetime.utcnow()
+
+        for token in tokens_in_cooldown:
+            # We need timezone-aware datetime for launch_date if it's naive
+            launch_date_aware = token.launch_date.replace(tzinfo=timezone.utc)
+            cooldown_duration = self._get_dynamic_cooldown(launch_date_aware)
             
-        for zone in golden_zones:
-            if abs(current_price - zone['price']) / zone['price'] < APPROACH_THRESHOLD:
-                return {
-                    "event_type": "APPROACHING_GOLDEN_ZONE",
-                    "strength": zone.get('score', 0),
-                    "level": zone['price'],
-                    "details": f"Price is approaching a Golden Zone at ~${zone['price']:.8f}"
-                }
-        return None
+            if token.last_state_change and now > token.last_state_change + cooldown_duration:
+                tokens_to_reset_ids.append(token.id)
         
-    def _check_price_surge(self, current_price: float, last_signal_price: float) -> Optional[Dict]:
-        """Checks for a significant profit run after a signal."""
-        profit_percentage = ((current_price - last_signal_price) / last_signal_price) * 100
-        if profit_percentage > 30.0: # Threshold for a "success update"
-            return {
-                "event_type": "PRICE_SURGE_CONFIRMED",
-                "strength": 8.0, # High strength for updates
-                "details": f"Price is up +{profit_percentage:.1f}% since the initial signal."
-            }
-        return None
+        if tokens_to_reset_ids:
+            stmt = (
+                update(Token)
+                .where(Token.id.in_(tokens_to_reset_ids))
+                .values(
+                    state=STATE_WATCHING,
+                    last_state_change=now
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            logger.info(f"🔄 Reset state to WATCHING for {len(tokens_to_reset_ids)} tokens.")
 
-# Instantiate the engine
-event_engine = EventEngine()
+
+token_state_service = TokenStateService()
