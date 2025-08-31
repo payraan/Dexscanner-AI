@@ -20,36 +20,85 @@ class AnalysisEngine:
         Calculates the Gem Score based on a weighted system.
         Weights: Technical (45%), On-chain (35%), Liquidity (20%)
         """
-        # 1. Technical Score (Max 45 points)
-        # Strength is on a scale of 0-10, so we multiply by 4.5 to scale it to 45.
         technical_score = strongest_signal.get('strength', 0) * 4.5
-
-        # 2. On-chain Score (Max 35 points)
         onchain_score = 0
         if holder_stats:
-            # distribution_score is 0-100, scale it to 35 points.
             distribution_score = holder_stats.get('distribution_score', 0)
             onchain_score = (distribution_score / 100) * 35
             logger.info(f"Token On-chain stats - Concentration: {holder_stats.get('top_10_concentration')}%, Distribution Score: {distribution_score}")
 
-        # 3. Liquidity Score (Max 20 points)
         liquidity_score = 0
         if liquidity_stats:
-            # Assign 10 points for positive net flow
             if liquidity_stats.get('net_flow_24h_usd', 0) > 0:
                 liquidity_score += 10
-            # Assign 10 points for good stability (>1.5 means more adds than removes)
             if liquidity_stats.get('liquidity_stability_ratio', 0) > 1.5:
                 liquidity_score += 10
         
         total_score = technical_score + onchain_score + liquidity_score
-        
-        # Ensure the score does not exceed 100
         return min(total_score, 100.0)
+
+    def _calculate_fib_retracement(self, high: float, low: float) -> Dict[float, float]:
+        """Calculates standard Fibonacci retracement levels."""
+        if high == low:
+            return {}
+        price_range = high - low
+        return {
+            level: high - (price_range * level)
+            for level in [0.236, 0.382, 0.5, 0.618, 0.786]
+        }
+
+    def _create_confluence_zones(self, raw_zones: List[Dict], fibo_state: Optional[Dict]) -> List[Dict]:
+        """
+        Merges raw S/R zones with Fibonacci levels to create high-priority Confluence Zones.
+        """
+        if not fibo_state or not raw_zones:
+            return raw_zones
+
+        high, low = fibo_state['high'], fibo_state['low']
+        fib_levels = self._calculate_fib_retracement(high, low)
+        
+        confluence_zones = []
+        used_raw_zones = set()
+        CONFLUENCE_THRESHOLD = 0.05  # 5% price proximity for merging
+
+        for fib_level, fib_price in fib_levels.items():
+            for i, raw_zone in enumerate(raw_zones):
+                if i in used_raw_zones:
+                    continue
+                
+                # Check if a raw zone is close to a fib level
+                if abs(raw_zone['price'] - fib_price) / fib_price < CONFLUENCE_THRESHOLD:
+                    
+                    # Create a new, stronger confluence zone
+                    new_zone = raw_zone.copy()
+                    new_zone['price'] = (raw_zone['price'] + fib_price) / 2 # Average the price
+                    new_zone['type'] = f"confluence_{raw_zone['type']}"
+                    new_zone['score'] += 2.0  # Base score bonus for any confluence
+                    new_zone['confluence_fib_level'] = fib_level
+
+                    # Extra bonus for "Golden Zone" confluence
+                    if fib_level in [0.5, 0.618]:
+                        new_zone['score'] += 1.5
+                        new_zone['type'] = f"golden_{new_zone['type']}"
+
+                    confluence_zones.append(new_zone)
+                    used_raw_zones.add(i)
+                    break # Move to the next fib level once a match is found
+
+        # Add any remaining raw zones that didn't form a confluence
+        for i, raw_zone in enumerate(raw_zones):
+            if i not in used_raw_zones:
+                confluence_zones.append(raw_zone)
+        
+        # Sort by score and return the new, prioritized list of zones
+        confluence_zones.sort(key=lambda x: x['score'], reverse=True)
+        logger.info(f"Created {len(confluence_zones)} final zones from {len(raw_zones)} raw zones and fib levels.")
+        return confluence_zones[:5] # Return top 5 most powerful zones
+
 
     async def analyze_token(self, token_data: Dict) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
         """
-        Analyze a single token using its accurate creation date to select the optimal timeframe.
+        Main analysis pipeline with the new Confluence Zone generation step.
         """
         if token_data.get('volume_24h', 0) < self.min_volume_threshold:
             return None, None
@@ -61,12 +110,8 @@ class AnalysisEngine:
                 return None, None
 
             launch_date = datetime.fromisoformat(pool_details['pool_created_at'].replace('Z', '+00:00'))
-            
             timeframe, aggregate = get_dynamic_timeframe(launch_date)
             
-            age_days = (datetime.now(timezone.utc) - launch_date).days
-            logger.info(f"Token {token_data.get('symbol')} is {age_days} days old -> Selected timeframe: {aggregate}{timeframe[0].upper()}")
-
             limit_map = {
                 ("minute", "1"): 300, ("minute", "5"): 200, ("minute", "15"): 150,
                 ("hour", "1"): 200, ("hour", "4"): 150, ("hour", "12"): 100, ("day", "1"): 90
@@ -77,18 +122,28 @@ class AnalysisEngine:
             )
 
             if df is None or df.empty or len(df) < 20:
-                logger.warning(f"Insufficient OHLCV data for {token_data.get('symbol')} on {timeframe}/{aggregate} timeframe.")
                 return None, None
 
-            fibo_state = None
+            fibo_state_dict = None
             async for session in get_db():
                 fibo_state = await fibonacci_engine.get_or_create_state(
                     session, token_data['address'], f"{timeframe}_{aggregate}", df
                 )
+                if fibo_state:
+                    fibo_state_dict = {
+                        'high': fibo_state.high_point, 'low': fibo_state.low_point,
+                        'target1': fibo_state.target1_price, 'target2': fibo_state.target2_price,
+                        'target3': fibo_state.target3_price, 'status': fibo_state.status
+                    }
 
-            zones = zone_detector.find_support_resistance_zones(df)
+            # --- NEW: Generate high-quality Confluence Zones ---
+            raw_zones = zone_detector.find_support_resistance_zones(df)
+            final_zones = self._create_confluence_zones(raw_zones, fibo_state_dict)
+            # --- END NEW ---
+
+            # Pass the FINAL list of zones to the strategy engine
             detected_strategies = await trading_strategies.evaluate_all_strategies(
-                df, zones, token_data['address']
+                df, final_zones, token_data['address']
             )
 
             if not detected_strategies and token_data.get('volume_24h', 0) > 1000000:
@@ -99,12 +154,10 @@ class AnalysisEngine:
             if detected_strategies:
                 strongest = detected_strategies[0]
                 
-                # --- NEW: Calculate Gem Score using the weighted system ---
                 holder_stats = token_data.get('holder_stats')
                 liquidity_stats = token_data.get('liquidity_stats')
                 gem_score = self._calculate_gem_score(strongest, holder_stats, liquidity_stats)
                 
-                # Only send signal if gem score is high enough
                 if gem_score < 50:
                     logger.info(f"Skipping {token_data.get('symbol')} - Low gem score: {gem_score:.1f}")
                     return None, None
@@ -114,15 +167,12 @@ class AnalysisEngine:
                     'pool_id': token_data.get('pool_id'), 'signal_type': strongest.get('signal'),
                     'strength': strongest.get('strength'), 'volume_24h': token_data.get('volume_24h'),
                     'price': token_data.get('price_usd'), 'timeframe': f"{aggregate}{timeframe[0].upper()}",
-                    'all_signals': [s.get('signal') for s in detected_strategies], 'zones': zones,
+                    'all_signals': [s.get('signal') for s in detected_strategies], 
+                    'zones': final_zones, # Use the final, prioritized zones for charting
                     'gem_score': round(gem_score, 1),
                     'holder_concentration': holder_stats.get('top_10_concentration') if holder_stats else None,
                     'liquidity_flow': liquidity_stats.get('net_flow_24h_usd') if liquidity_stats else None,
-                    'fibonacci_state': {
-                        'high': fibo_state.high_point, 'low': fibo_state.low_point,
-                        'target1': fibo_state.target1_price, 'target2': fibo_state.target2_price,
-                        'target3': fibo_state.target3_price, 'status': fibo_state.status
-                    } if fibo_state else None
+                    'fibonacci_state': fibo_state_dict
                 }
                 return signal_data, df
 

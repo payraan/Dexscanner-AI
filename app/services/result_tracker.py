@@ -12,35 +12,34 @@ from aiogram.types import BufferedInputFile
 
 logger = logging.getLogger(__name__)
 
-# --- ثابت‌ها برای مدیریت بهتر ---
-PROFIT_THRESHOLD = 20.0  # 20%
-RUG_PULL_THRESHOLD = -80.0  # -80%
+# --- Constants for better management ---
+PROFIT_THRESHOLD = 20.0  # 20% success threshold
+RUG_PULL_THRESHOLD = -80.0 # -80% drop
 TRACKING_EXPIRATION_DAYS = 7
 CLEANUP_EXPIRATION_DAYS = 30
 
+# --- NEW: Define tracking statuses ---
+STATUS_TRACKING = 'TRACKING'
+STATUS_SUCCESS = 'SUCCESS'
+STATUS_FAILED = 'FAILED'
+STATUS_EXPIRED = 'EXPIRED'
+
 class ResultTracker:
     def __init__(self):
-        """سازنده کلاس که فقط یک نمونه از Bot را برای ارسال پیام نگه می‌دارد."""
         self.bot = Bot(token=settings.BOT_TOKEN)
 
     async def track_signals(self):
-        """Job اصلی برای ردیابی سیگنال‌های فعال (متد در سطح کلاس)."""
-        logger.info("Starting result tracking cycle...")
+        """Main job to track active signals' performance."""
+        logger.info("📈 Starting result tracking cycle...")
         async for session in get_db():
             result = await session.execute(
-                select(SignalResult).where(SignalResult.status == 'TRACKING')
+                select(SignalResult).where(SignalResult.tracking_status == STATUS_TRACKING)
             )
             tracking_signals = result.scalars().all()
 
             for signal in tracking_signals:
                 try:
-                    # بررسی انقضای ردیابی
-                    if datetime.utcnow() > signal.created_at + timedelta(days=TRACKING_EXPIRATION_DAYS):
-                        signal.status = 'EXPIRED'
-                        logger.info(f"Tracking expired for {signal.token_symbol}")
-                        continue
-
-                    # دریافت pool_id از جدول Token
+                    # Get the token's pool_id for fetching new data
                     token_result = await session.execute(
                         select(Token).where(Token.address == signal.token_address)
                     )
@@ -49,105 +48,116 @@ class ResultTracker:
                         logger.warning(f"Token or pool_id not found for address {signal.token_address}")
                         continue
 
-                    # دریافت داده‌های جدید
+                    # Fetch the latest price data
                     pool_details = await data_provider.fetch_pool_details(token.pool_id)
-                    if not pool_details:
+                    if not pool_details or 'base_token_price_usd' not in pool_details:
                         continue
-
-                    current_price = float(pool_details.get('base_token_price_usd', 0))
+                    
+                    current_price = float(pool_details['base_token_price_usd'])
                     if current_price == 0:
                         continue
 
                     profit = ((current_price - signal.signal_price) / signal.signal_price) * 100
 
-                    # بروزرسانی بالاترین قیمت
+                    # --- CORE LOGIC: Continuously update the peak performance ---
                     if current_price > (signal.peak_price or 0):
                         signal.peak_price = current_price
-                        signal.profit_percentage = profit
+                        signal.peak_profit_percentage = profit
+                        logger.info(f"New peak for {signal.token_symbol}: {profit:.2f}% at ${current_price:.8f}")
 
-                    # بررسی شرایط راگ پول
-                    if profit < RUG_PULL_THRESHOLD:
-                        signal.is_rugged = True
-                        signal.status = 'EXPIRED'
-                        logger.warning(f"Rug pull detected for {signal.token_symbol}")
-                        continue
-
-                    # بررسی رسیدن به سود (فقط یک بار ثبت می‌شود)
-                    if profit >= PROFIT_THRESHOLD and signal.status == 'TRACKING':
-                        await self.capture_successful_result(session, signal, token.pool_id, current_price)
+                    # --- Check for end conditions ---
+                    is_expired = datetime.utcnow() > signal.created_at + timedelta(days=TRACKING_EXPIRATION_DAYS)
+                    is_rugged = profit < RUG_PULL_THRESHOLD
+                    
+                    if is_expired or is_rugged:
+                        await self._close_tracking(session, signal, token.pool_id, is_rugged)
 
                 except Exception as e:
                     logger.error(f"Error tracking signal {signal.id}: {e}", exc_info=True)
             
             await session.commit()
 
-    async def capture_successful_result(self, session, signal, pool_id, current_price):
-        """یک نتیجه موفق را ثبت و چارت After را تولید می‌کند (متد در سطح کلاس)."""
-        logger.info(f"Capturing successful result for {signal.token_symbol} with {signal.profit_percentage:.2f}% profit")
+    async def _close_tracking(self, session, signal, pool_id, is_rugged):
+        """Closes the tracking for a signal, determines final status, and captures chart if successful."""
+        signal.closed_at = datetime.utcnow()
+
+        if is_rugged:
+            signal.is_rugged = True
+            signal.tracking_status = STATUS_FAILED
+            logger.warning(f"🚨 Rug pull detected for {signal.token_symbol}! Tracking closed.")
+            return
+
+        # Determine final status based on peak performance
+        if signal.peak_profit_percentage >= PROFIT_THRESHOLD:
+            signal.tracking_status = STATUS_SUCCESS
+            logger.info(f"✅ Successful signal captured for {signal.token_symbol} with peak profit of {signal.peak_profit_percentage:.2f}%")
+            # Generate and save the "After" chart for successful signals
+            await self._capture_after_chart(signal, pool_id)
+        else:
+            signal.tracking_status = STATUS_FAILED
+            logger.info(f"❌ Signal for {signal.token_symbol} failed to meet profit threshold. Peak: {signal.peak_profit_percentage:.2f}%")
+            
+    async def _capture_after_chart(self, signal, pool_id):
+        """Generates the 'After' chart for a successful signal and saves the file_id."""
         try:
-            # دریافت داده‌های کندل برای چارت جدید
             df = await data_provider.fetch_ohlcv(pool_id, limit=200)
             if df is None or df.empty:
                 return
 
-            # ساخت چارت After
             signal_data_for_chart = {
                 'token': signal.token_symbol,
-                'price': current_price,
+                'price': signal.peak_price,
                 'address': signal.token_address,
-                'timeframe': '1H' # یک تایم فریم پیش فرض برای نمایش
+                'timeframe': '1H' # Default timeframe for display
             }
             chart_bytes = chart_generator.create_signal_chart(df, signal_data_for_chart)
 
             if chart_bytes:
                 photo = BufferedInputFile(chart_bytes, filename="after.png")
-                
-                # ارسال به کانال ادمین برای دریافت file_id
+                # Send to admin channel to get a persistent file_id
                 sent_message = await self.bot.send_photo(
                     chat_id=settings.ADMIN_CHANNEL_ID,
                     photo=photo,
-                    caption=f"After Chart - {signal.token_symbol} - Profit: {signal.profit_percentage:.2f}%"
+                    caption=f"📈 After Chart - {signal.token_symbol}\nPeak Profit: +{signal.peak_profit_percentage:.2f}%"
                 )
                 signal.after_chart_file_id = sent_message.photo[-1].file_id
-                signal.status = 'CAPTURED'
-                signal.captured_at = datetime.utcnow()
-                logger.info(f"Successfully captured result for {signal.token_symbol}")
+                logger.info(f"Saved 'After' chart for {signal.token_symbol}")
 
         except Exception as e:
-            logger.error(f"Failed to capture result for {signal.token_symbol}: {e}", exc_info=True)
+            logger.error(f"Failed to generate 'After' chart for {signal.token_symbol}: {e}", exc_info=True)
 
     async def cleanup_old_results(self):
-        """نتایج ثبت شده قدیمی‌تر از حد معین را پاکسازی می‌کند (متد در سطح کلاس)."""
-        logger.info("Running old results cleanup job...")
+        """Cleans up results that are no longer being tracked."""
+        logger.info("🧹 Running old results cleanup job...")
         async for session in get_db():
             from sqlalchemy import delete
-            # فقط نتایجی که ثبت شده (captured) و قدیمی هستند حذف شوند
+            # Delete results that are closed and older than the cleanup period
             await session.execute(
                 delete(SignalResult).where(
-                    SignalResult.status == 'CAPTURED',
-                    SignalResult.captured_at < datetime.utcnow() - timedelta(days=CLEANUP_EXPIRATION_DAYS)
+                    SignalResult.tracking_status.in_([STATUS_SUCCESS, STATUS_FAILED, STATUS_EXPIRED]),
+                    SignalResult.closed_at < datetime.utcnow() - timedelta(days=CLEANUP_EXPIRATION_DAYS)
                 )
             )
             await session.commit()
 
-# --- نمونه‌سازی و حلقه‌های اجرایی ---
+# --- Async loops (remain unchanged) ---
 
 result_tracker = ResultTracker()
 
 async def run_tracking_loop():
-    """حلقه بی‌پایان برای اجرای ردیاب سیگنال‌ها."""
+    """Endless loop to run the signal tracker."""
     while True:
         try:
             await result_tracker.track_signals()
         except Exception as e:
             logger.error(f"Critical error in tracking loop: {e}", exc_info=True)
-        await asyncio.sleep(30 * 60)  # هر 30 دقیقه
+        await asyncio.sleep(30 * 60)  # Every 30 minutes
 
 async def run_cleanup_loop():
-    """حلقه بی‌پایان برای اجرای پاکسازی نتایج قدیمی."""
+    """Endless loop to run the old results cleanup."""
     while True:
         try:
             await result_tracker.cleanup_old_results()
         except Exception as e:
             logger.error(f"Critical error in cleanup loop: {e}", exc_info=True)
-        await asyncio.sleep(24 * 60 * 60)  # هر 24 ساعت
+        await asyncio.sleep(24 * 60 * 60)  # Every 24 hours
