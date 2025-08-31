@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Optional, Dict, List, Tuple
 from app.scanner.data_provider import data_provider
-from app.scanner.strategies import trading_strategies
+# from app.scanner.strategies import trading_strategies # <-- REMOVED THIS LINE
 from app.scanner.zone_detector import zone_detector
 from app.scanner.timeframe_selector import get_dynamic_timeframe
 from app.database.session import get_db
@@ -59,46 +59,42 @@ class AnalysisEngine:
         
         confluence_zones = []
         used_raw_zones = set()
-        CONFLUENCE_THRESHOLD = 0.05  # 5% price proximity for merging
+        CONFLUENCE_THRESHOLD = 0.05
 
         for fib_level, fib_price in fib_levels.items():
             for i, raw_zone in enumerate(raw_zones):
                 if i in used_raw_zones:
                     continue
                 
-                # Check if a raw zone is close to a fib level
                 if abs(raw_zone['price'] - fib_price) / fib_price < CONFLUENCE_THRESHOLD:
-                    
-                    # Create a new, stronger confluence zone
                     new_zone = raw_zone.copy()
-                    new_zone['price'] = (raw_zone['price'] + fib_price) / 2 # Average the price
+                    new_zone['price'] = (raw_zone['price'] + fib_price) / 2
                     new_zone['type'] = f"confluence_{raw_zone['type']}"
-                    new_zone['score'] += 2.0  # Base score bonus for any confluence
+                    new_zone['score'] += 2.0
                     new_zone['confluence_fib_level'] = fib_level
 
-                    # Extra bonus for "Golden Zone" confluence
                     if fib_level in [0.5, 0.618]:
                         new_zone['score'] += 1.5
                         new_zone['type'] = f"golden_{new_zone['type']}"
 
                     confluence_zones.append(new_zone)
                     used_raw_zones.add(i)
-                    break # Move to the next fib level once a match is found
+                    break
 
-        # Add any remaining raw zones that didn't form a confluence
         for i, raw_zone in enumerate(raw_zones):
             if i not in used_raw_zones:
                 confluence_zones.append(raw_zone)
         
-        # Sort by score and return the new, prioritized list of zones
         confluence_zones.sort(key=lambda x: x['score'], reverse=True)
         logger.info(f"Created {len(confluence_zones)} final zones from {len(raw_zones)} raw zones and fib levels.")
-        return confluence_zones[:5] # Return top 5 most powerful zones
+        return confluence_zones[:5]
 
 
     async def analyze_token(self, token_data: Dict) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
         """
-        Main analysis pipeline with the new Confluence Zone generation step.
+        This function now acts as a data preparer for the EventEngine.
+        It fetches all necessary data (OHLCV, zones, fibo) and returns them in a structured way.
+        It no longer calls the strategy engine directly.
         """
         if token_data.get('volume_24h', 0) < self.min_volume_threshold:
             return None, None
@@ -106,7 +102,6 @@ class AnalysisEngine:
         try:
             pool_details = await data_provider.fetch_pool_details(token_data['pool_id'])
             if not pool_details or 'pool_created_at' not in pool_details:
-                logger.warning(f"Could not get accurate creation date for {token_data.get('symbol', 'N/A')}")
                 return None, None
 
             launch_date = datetime.fromisoformat(pool_details['pool_created_at'].replace('Z', '+00:00'))
@@ -136,45 +131,20 @@ class AnalysisEngine:
                         'target3': fibo_state.target3_price, 'status': fibo_state.status
                     }
 
-            # --- NEW: Generate high-quality Confluence Zones ---
             raw_zones = zone_detector.find_support_resistance_zones(df)
             final_zones = self._create_confluence_zones(raw_zones, fibo_state_dict)
-            # --- END NEW ---
+            
+            # --- LOGIC REMOVED: No longer calls strategies directly ---
 
-            # Pass the FINAL list of zones to the strategy engine
-            detected_strategies = await trading_strategies.evaluate_all_strategies(
-                df, final_zones, token_data['address']
-            )
-
-            if not detected_strategies and token_data.get('volume_24h', 0) > 1000000:
-                detected_strategies.append({
-                    'signal': 'high_volume', 'strength': min(token_data.get('volume_24h', 0) / 1000000, 10.0)
-                })
-
-            if detected_strategies:
-                strongest = detected_strategies[0]
-                
-                holder_stats = token_data.get('holder_stats')
-                liquidity_stats = token_data.get('liquidity_stats')
-                gem_score = self._calculate_gem_score(strongest, holder_stats, liquidity_stats)
-                
-                if gem_score < 50:
-                    logger.info(f"Skipping {token_data.get('symbol')} - Low gem score: {gem_score:.1f}")
-                    return None, None
-                
-                signal_data = {
-                    'token': token_data.get('symbol'), 'address': token_data.get('address'),
-                    'pool_id': token_data.get('pool_id'), 'signal_type': strongest.get('signal'),
-                    'strength': strongest.get('strength'), 'volume_24h': token_data.get('volume_24h'),
-                    'price': token_data.get('price_usd'), 'timeframe': f"{aggregate}{timeframe[0].upper()}",
-                    'all_signals': [s.get('signal') for s in detected_strategies], 
-                    'zones': final_zones, # Use the final, prioritized zones for charting
-                    'gem_score': round(gem_score, 1),
-                    'holder_concentration': holder_stats.get('top_10_concentration') if holder_stats else None,
-                    'liquidity_flow': liquidity_stats.get('net_flow_24h_usd') if liquidity_stats else None,
-                    'fibonacci_state': fibo_state_dict
-                }
-                return signal_data, df
+            # Just prepare and return all data
+            analysis_data = {
+                'token': token_data.get('symbol'), 'address': token_data.get('address'),
+                'pool_id': token_data.get('pool_id'), 'volume_24h': token_data.get('volume_24h'),
+                'price': token_data.get('price_usd'), 'timeframe': f"{aggregate}{timeframe[0].upper()}",
+                'zones': final_zones,
+                'fibonacci_state': fibo_state_dict
+            }
+            return analysis_data, df
 
         except Exception as e:
             logger.error(f"Error analyzing {token_data.get('symbol', 'Unknown')}: {e}", exc_info=True)
