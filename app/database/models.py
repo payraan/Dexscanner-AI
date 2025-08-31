@@ -20,6 +20,13 @@ class Token(Base):
    pool_id = Column(String, unique=True, nullable=False)
    symbol = Column(String, nullable=False)
    launch_date = Column(DateTime, nullable=False)
+   
+   # --- فیلدهای جدید برای چرخه حیات و مدیریت وضعیت ---
+   state = Column(String, default='WATCHING', index=True) # مقادیر: WATCHING, SIGNALED, COOLDOWN, INVALIDATED
+   last_signal_price = Column(Float, nullable=True)
+   last_state_change = Column(DateTime, default=datetime.utcnow)
+   # --- پایان فیلدهای جدید ---
+
    health_status = Column(String, default='active')
    last_health_check = Column(DateTime)
    
@@ -87,17 +94,21 @@ class SignalResult(Base):
     token_symbol = Column(String, nullable=True)
     
     signal_price = Column(Float, nullable=False)
-    peak_price = Column(Float, nullable=True)
-    profit_percentage = Column(Float, default=0.0)
+    
+    # --- فیلدهای بهبود یافته برای ردیابی عملکرد ---
+    peak_price = Column(Float, nullable=True) # بالاترین قیمت پس از سیگنال
+    peak_profit_percentage = Column(Float, default=0.0) # درصد سود در قله
+    tracking_status = Column(String, default='TRACKING', index=True) # مقادیر: TRACKING, SUCCESS, FAILED, EXPIRED
+    closed_at = Column(DateTime, nullable=True) # زمان بسته شدن ردیابی
+    # --- پایان فیلدهای بهبود یافته ---
 
     before_chart_file_id = Column(String, nullable=False)
     after_chart_file_id = Column(String, nullable=True)
 
-    status = Column(String, default='TRACKING', index=True)
     is_rugged = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
-    captured_at = Column(DateTime, nullable=True)
+    captured_at = Column(DateTime, nullable=True) # این فیلد ممکن است در آینده با closed_at ترکیب شود
 
     alert = relationship("Alert")
 
@@ -112,3 +123,13 @@ class SmartMoneyWallet(Base):
     notes = Column(Text)
     last_seen = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+# --- مدل جدید برای لیست سیاه ---
+class Blacklist(Base):
+    __tablename__ = 'blacklist'
+
+    id = Column(Integer, primary_key=True)
+    token_address = Column(String, unique=True, nullable=False, index=True)
+    reason = Column(String, nullable=True) # e.g., "RUG_PULL", "HONEYPOT"
+    added_at = Column(DateTime, default=datetime.utcnow)
+# --- پایان مدل جدید ---

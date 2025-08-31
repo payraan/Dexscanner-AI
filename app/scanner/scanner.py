@@ -1,11 +1,14 @@
 import asyncio
 import logging
 from typing import List, Dict
+
+# --- Import the new service ---
+from app.services.cooldown_service import token_state_service
+# --- Keep other imports ---
 from app.scanner.data_provider import data_provider
 from app.scanner.analysis import analysis_engine
 from app.core.config import settings
 from app.scanner.telegram_sender import telegram_sender
-from app.services.cooldown_service import cooldown_service
 from app.services.token_service import token_service
 from app.scanner.token_health import token_health_checker
 from app.services.bitquery_service import bitquery_service
@@ -18,119 +21,101 @@ class TokenScanner:
         self.scan_count = 0
 
     async def _analyze_and_send_signals(self, tokens: List[Dict]):
-        """Analyze tokens, check health, check cooldown, and send valid signals."""
+        """Analyze tokens and send signals based on their state."""
         
         signals_to_send = []
         healthy_tokens = 0
         
-        # Analyze all tokens
-        for token in tokens:
+        for token_data in tokens:
             # First check token health
             df_for_health = await data_provider.fetch_ohlcv(
-                token['pool_id'],
-                timeframe="hour",
-                aggregate="1", 
-                limit=50
+                token_data['pool_id'], timeframe="hour", aggregate="1", limit=50
             )
+            health_status = await token_health_checker.check_token_health(df_for_health, token_data)
             
-            health_status = await token_health_checker.check_token_health(df_for_health, token)
-            
-            # Skip rugged or suspicious tokens
             if health_status in ['rugged', 'suspicious']:
-                logger.warning("Skipping token due to health issues", 
-                             extra={'token_symbol': token['symbol'], 'health_status': health_status})
+                logger.warning(f"Skipping token due to health issues: {token_data['symbol']} ({health_status})")
                 continue
-                
+            
             healthy_tokens += 1
             
-            # On-chain analysis filter (only for top tokens to save API)
-            if healthy_tokens <= 5:  # Only analyze first 5 healthy tokens
-                try:
-                    holder_stats = await bitquery_service.get_holder_stats(token['address'])
-                    if holder_stats:
-                        # Skip if high concentration
-                        if holder_stats['top_10_concentration'] > 60:
-                            logger.warning(f"Skipping {token['symbol']} - High concentration: {holder_stats['top_10_concentration']}%")
-                            continue
-                        
-                        # Add on-chain data to token for later use
-                        token['holder_stats'] = holder_stats
-                        
-                        # Optional: Get liquidity stats for very promising tokens
-                        if holder_stats['top_10_concentration'] < 30:
-                            liquidity_stats = await bitquery_service.get_liquidity_stats(token['address'])
-                            if liquidity_stats:
-                                token['liquidity_stats'] = liquidity_stats
-                                
-                except Exception as e:
-                    logger.error(f"Bitquery analysis failed for {token['symbol']}: {e}")
-                    # Continue anyway if Bitquery fails
+            # --- NEW: Check if a signal can be sent for this token BEFORE deep analysis ---
+            can_send = await token_state_service.can_send_signal(token_data['address'])
+            if not can_send:
+                logger.info(f"Token {token_data['symbol']} is in COOLDOWN/SIGNALED state, skipping deep analysis.")
+                continue # Skip to the next token
+            # --- END NEW ---
 
-            # Get signal and DataFrame from analysis_engine
-            signal, df = await analysis_engine.analyze_token(token)
+            # On-chain analysis filter
+            if healthy_tokens <= 10: # Increased limit for more on-chain checks
+                try:
+                    holder_stats = await bitquery_service.get_holder_stats(token_data['address'])
+                    if holder_stats:
+                        if holder_stats['top_10_concentration'] > 60:
+                            logger.warning(f"Skipping {token_data['symbol']} - High concentration: {holder_stats['top_10_concentration']}%")
+                            continue
+                        token_data['holder_stats'] = holder_stats
+                        
+                        if holder_stats['top_10_concentration'] < 30:
+                            liquidity_stats = await bitquery_service.get_liquidity_stats(token_data['address'])
+                            if liquidity_stats:
+                                token_data['liquidity_stats'] = liquidity_stats
+                except Exception as e:
+                    logger.error(f"Bitquery analysis failed for {token_data['symbol']}: {e}")
+            
+            signal, df = await analysis_engine.analyze_token(token_data)
             
             if signal and df is not None and not df.empty:
-                can_send = await cooldown_service.can_send_signal(
-                    signal['address'],
-                    signal['signal_type']
-                )
-                
-                if can_send:
-                    # Add health status to signal data
-                    signal['health_status'] = health_status
-                    signals_to_send.append((signal, df))
-                    logger.info("Signal queued for processing", 
-                              extra={'token_symbol': signal['token'], 'signal_type': signal['signal_type']})
-                else:
-                    logger.info("Signal skipped due to cooldown", 
-                              extra={'token_symbol': signal['token']})
+                # The check is already done, so we just queue the signal
+                signal['health_status'] = health_status
+                signals_to_send.append((signal, df))
+                logger.info(f"Signal QUEUED for {signal['token']} ({signal['signal_type']})")
 
-            await asyncio.sleep(2) 
+            await asyncio.sleep(1) 
 
-        logger.info("Health screening completed", 
-                   extra={'healthy_tokens': healthy_tokens, 'total_tokens': len(tokens)})
+        logger.info(f"Health screening completed. Healthy tokens: {healthy_tokens}/{len(tokens)}")
 
         if not signals_to_send:
-            logger.info("No new signals to send")
+            logger.info("No new signals to send in this cycle.")
             return
 
-        logger.info("Preparing to send signals", 
-                   extra={'signal_count': len(signals_to_send)})
+        logger.info(f"Preparing to send {len(signals_to_send)} new signals.")
         
-        # Send all valid signals
         for signal, df in signals_to_send:
             await telegram_sender.send_signal(signal, df)
-            await cooldown_service.record_signal(signal)
+            # --- NEW: Use the new service to record the signal ---
+            await token_state_service.record_signal_sent(
+                signal['address'],
+                signal.get('price', 0)
+            )
+            # --- END NEW ---
 
     async def start_scanning(self):
         """Start background scanning loop"""
         self.running = True
-        logger.info("Scanner started", extra={'scan_interval': settings.SCAN_INTERVAL})
+        logger.info(f"Scanner started. Scan interval: {settings.SCAN_INTERVAL} seconds")
 
         while self.running:
             try:
                 self.scan_count += 1
-                logger.info("Starting scan cycle", extra={'scan_number': self.scan_count})
+                logger.info(f"--- Starting Scan Cycle #{self.scan_count} ---")
                 
                 tokens = await data_provider.fetch_trending_tokens(
                     limit=settings.TRENDING_TOKENS_LIMIT
                 )
 
                 if tokens:
-                    # Store tokens in database with health status
                     await token_service.store_tokens_with_health(tokens)
-                    logger.info("Tokens fetched and stored", 
-                              extra={'token_count': len(tokens)})
+                    logger.info(f"Fetched and stored {len(tokens)} tokens.")
                     await self._analyze_and_send_signals(tokens)
                 else:
-                    logger.warning("No trending tokens found in this scan cycle")
+                    logger.warning("No trending tokens found in this scan cycle.")
                 
-                logger.info("Scan cycle completed", extra={'scan_number': self.scan_count})
+                logger.info(f"--- Scan Cycle #{self.scan_count} Completed ---")
                 await asyncio.sleep(settings.SCAN_INTERVAL)
 
             except Exception as e:
-                logger.error("Error in scanner loop", 
-                           extra={'error': str(e), 'scan_number': self.scan_count}, exc_info=True)
+                logger.error(f"CRITICAL ERROR in scanner loop #{self.scan_count}: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
     def stop(self):
