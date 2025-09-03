@@ -183,7 +183,6 @@ class TelegramSender:
                        session.add(new_tracker)
                        logger.info(f"Started tracking for {signal.get('token')}")
                    
-                   session.add(token)
                    await session.commit()
                    break
 
