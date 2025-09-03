@@ -27,8 +27,14 @@ class TelegramSender:
        price_change_str = ""
        if token.last_scan_price and token.last_scan_price > 0:
            change = ((signal.get('price', 0) - token.last_scan_price) / token.last_scan_price) * 100
-           emoji = "🟢" if change > 0 else "🔴"
-           price_change_str = f" ({emoji} {change:+.2f}%)"
+    
+           if abs(change) < 0.01:
+               # اگر تغییر ناچیز است، چیزی نمایش نده
+               price_change_str = " (بدون تغییر)"
+           else:
+               emoji = "🟢" if change > 0 else "🔴"
+               # استفاده از مقدار مطلق (abs) و حذف علامت + از فرمت
+               price_change_str = f" ({emoji} {abs(change):.2f}%)"
        
        # Determine update type
        if not token.last_scan_price:
@@ -115,7 +121,8 @@ class TelegramSender:
                                    photo=photo,
                                    caption=f"↳ {caption}",  # Add arrow for replies
                                    parse_mode='Markdown',
-                                   reply_to_message_id=reply_to_message_id
+                                   reply_to_message_id=reply_to_message_id,
+                                   reply_markup=reply_markup
                                )
                            except Exception as e:
                                # If reply fails, send as new message

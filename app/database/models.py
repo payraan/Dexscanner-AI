@@ -93,7 +93,7 @@ class SignalResult(Base):
     __tablename__ = 'signal_results'
 
     id = Column(Integer, primary_key=True)
-    alert_id = Column(Integer, ForeignKey('alerts.id'), nullable=False, unique=True)
+    alert_id = Column(Integer, ForeignKey('alerts.id'), nullable=True, unique=True)
     token_address = Column(String, nullable=False, index=True)
     token_symbol = Column(String, nullable=True)
     
