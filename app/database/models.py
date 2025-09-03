@@ -19,12 +19,16 @@ class Token(Base):
    address = Column(String, unique=True, index=True, nullable=False)
    pool_id = Column(String, unique=True, nullable=False)
    symbol = Column(String, nullable=False)
-   launch_date = Column(DateTime, nullable=False)
-   
+   launch_date = Column(DateTime, nullable=False) 
+     
    # --- فیلدهای جدید برای چرخه حیات و مدیریت وضعیت ---
    state = Column(String, default='WATCHING', index=True) # مقادیر: WATCHING, SIGNALED, COOLDOWN, INVALIDATED
    last_signal_price = Column(Float, nullable=True)
    last_state_change = Column(DateTime, default=datetime.utcnow)
+   last_scan_price = Column(Float, nullable=True)
+   message_id = Column(BigInteger, nullable=True)
+   reply_count = Column(Integer, default=0)
+
    # --- پایان فیلدهای جدید ---
 
    health_status = Column(String, default='active')

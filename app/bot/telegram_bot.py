@@ -44,6 +44,7 @@ class TelegramBot:
         self.dp.message.register(self.support_handler, F.text == "📞 پشتیبانی")
         # Handler جدید برای دکمه AI
         self.dp.callback_query.register(self.ai_analysis_handler, F.data.startswith("ai_analyze_"))
+        self.dp.callback_query.register(self.onchain_analysis_handler, F.data.startswith("onchain_"))
         self.dp.message.register(self.activate_subscription_handler, Command("activatesub"))
 
     async def activate_subscription_handler(self, message: Message):
@@ -163,6 +164,47 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"AI analysis error: {e}")
             await callback.message.reply("❌ خطا در تحلیل هوش مصنوعی.")
+
+    async def onchain_analysis_handler(self, callback: CallbackQuery):
+        """Handle OnChain analysis button click"""
+        await callback.answer("📊 در حال دریافت داده‌های آنچین...")
+        
+        try:
+            token_address = callback.data.replace("onchain_", "")
+            
+            # Import bitquery service
+            from app.services.bitquery_service import bitquery_service
+            
+            holder_stats = await bitquery_service.get_holder_stats(token_address)
+            liquidity_stats = await bitquery_service.get_liquidity_stats(token_address)
+            
+            if not holder_stats and not liquidity_stats:
+                await callback.message.reply("❌ داده‌های آنچین در حال حاضر در دسترس نیست.")
+                return
+            
+            # Build response text
+            text = "📊 **تحلیل آنچین**\n\n"
+            
+            if holder_stats:
+                concentration = holder_stats.get('top_10_concentration', 'N/A')
+                text += f"💎 **توزیع هولدرها:**\n"
+                text += f"• تمرکز Top 10: `{concentration}%`\n"
+                text += f"• امتیاز توزیع: `{holder_stats.get('distribution_score', 0):.1f}/100`\n\n"
+            
+            if liquidity_stats:
+                net_flow = liquidity_stats.get('net_flow_24h_usd', 0)
+                stability = liquidity_stats.get('liquidity_stability_ratio', 0)
+                emoji = "🟢" if net_flow > 0 else "🔴"
+                
+                text += f"💰 **جریان نقدینگی (24h):**\n"
+                text += f"• خالص: {emoji} `${net_flow:,.0f}`\n"
+                text += f"• نسبت پایداری: `{stability:.2f}`\n"
+            
+            await callback.message.reply(text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"OnChain analysis error: {e}")
+            await callback.message.reply("❌ خطا در دریافت داده‌های آنچین")
 
     async def support_handler(self, message: Message):
         """Handle /support command"""

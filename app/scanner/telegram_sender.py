@@ -13,152 +13,183 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class TelegramSender:
-    def __init__(self):
-        self.bot = Bot(token=settings.BOT_TOKEN)
+   def __init__(self):
+       self.bot = Bot(token=settings.BOT_TOKEN)
 
-    def _build_signal_caption(self, signal: Dict) -> str:
-        """
-        Creatively builds the signal message using a storytelling format and confidence levels.
-        """
-        gem_score = signal.get('gem_score', 0)
-        token_symbol = signal.get('token', 'N/A')
-        signal_type = signal.get('signal_type', 'unknown').replace('_', ' ').title()
-        
-        # 1. Determine Confidence Level and Header
-        if gem_score >= 85:
-            confidence_level = "اعتماد بالا 🔥"
-            header = f"🔥 **شکار الماس: ${token_symbol}** 🔥"
-        elif gem_score >= 65:
-            confidence_level = "اعتماد متوسط ⚡️"
-            header = f"⚡️ **فرصت طلایی: ${token_symbol}** ⚡️"
-        else:
-            confidence_level = "لیست زیر نظر 💡"
-            header = f"💡 **تحت نظر: ${token_symbol}** 💡"
-            
-        # 2. Build the Story Chapters
-        # Chapter 1: The Discovery
-        story_discovery = "ربات ما افزایش فعالیت بازار در این توکن را شناسایی کرده و آن را تحت نظر گرفت."
-        if 'volume_explosion' in signal.get('all_signals', []):
-            story_discovery = f"با شناسایی **جهش حجم ناگهانی**، {token_symbol} وارد رادار شکارچی ما شد."
+   def _build_analytical_caption(self, signal: Dict, token: Token) -> str:
+       """
+       Build caption for analytical updates (not signals anymore)
+       """
+       token_symbol = signal.get('token', 'N/A')
+       price_str = f"${signal.get('price', 0):.8f}"
+       
+       # Calculate price change if we have previous price
+       price_change_str = ""
+       if token.last_scan_price and token.last_scan_price > 0:
+           change = ((signal.get('price', 0) - token.last_scan_price) / token.last_scan_price) * 100
+           emoji = "🟢" if change > 0 else "🔴"
+           price_change_str = f" ({emoji} {change:+.2f}%)"
+       
+       # Determine update type
+       if not token.last_scan_price:
+           update_type = "🆕 اسکن جدید"
+       elif token.state == 'TRENDING':
+           update_type = "📈 آپدیت روند"
+       else:
+           update_type = "🔄 آپدیت وضعیت"
+       
+       # Build support/resistance info
+       zones_info = ""
+       if signal.get('zones'):
+           for zone in signal.get('zones', [])[:3]:  # Top 3 zones
+               zone_type = "مقاومت" if 'resistance' in zone['type'] else "حمایت"
+               zones_info += f"• {zone_type}: ${zone['price']:.8f}\n"
+       
+       # Build fibonacci info
+       fib_info = ""
+       if signal.get('fibonacci_state'):
+           fib = signal['fibonacci_state']
+           if fib.get('target1'):
+               fib_info = f"🎯 تارگت‌ها: ${fib['target1']:.8f} | ${fib.get('target2', 0):.8f}"
+       
+       caption = (
+           f"{update_type} - **${token_symbol}**\n\n"
+           f"💰 **قیمت:** `{price_str}`{price_change_str}\n"
+           f"📊 **حجم 24h:** `${signal.get('volume_24h', 0):,.0f}`\n"
+           f"⏱ **تایم‌فریم:** `{signal.get('timeframe', 'N/A')}`\n\n"
+       )
+       
+       if zones_info:
+           caption += f"📍 **سطوح کلیدی:**\n{zones_info}\n"
+       
+       if fib_info:
+           caption += f"{fib_info}\n\n"
+       
+       caption += f"📜 **آدرس:** `{signal.get('address', 'N/A')}`"
+       
+       return caption
 
-        # Chapter 2: The Trigger (Main Event)
-        story_trigger = f"اکنون، یک رویداد **{signal_type}** به عنوان ماشه شلیک عمل کرده است."
-        if 'breakout' in signal.get('signal_type', ''):
-            level = signal.get('level', 0)
-            zone_type = "ناحیه طلایی" if "golden" in signal.get('zones', [{}])[0].get('type', '') else "ناحیه مقاومتی کلیدی"
-            story_trigger = f"قیمت با قدرت **{zone_type}** را در حدود `${level:.8f}` شکسته و بالای آن تثبیت شده است."
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token):
+       """Send analytical update (renamed from signal for compatibility)"""
+       try:
+           async for session in get_db():
+               result = await session.execute(select(User).where(User.is_subscribed == True))
+               subscribed_users = result.scalars().all()
+           
+           if not subscribed_users:
+               logger.warning("No subscribed users found")
+               return
 
-        # Chapter 3: Key Details
-        price_str = f"${signal.get('price', 0):.8f}"
-        volume_str = f"${signal.get('volume_24h', 0):,.0f}"
-        
-        # 3. Assemble the final caption
-        caption = (
-            f"{header}\n\n"
-            f"**سطح اعتماد:** `{confidence_level}`\n"
-            f"**امتیاز نهایی:** `{gem_score:.1f}/100`\n\n"
-            f"**📖 داستان سیگنال:**\n"
-            f"📍 **فصل اول (کشف):** {story_discovery}\n"
-            f"📍 **فصل دوم (ماشه شلیک):** {story_trigger}\n\n"
-            f"**📊 جزئیات کلیدی:**\n"
-            f"- **قیمت فعلی:** `{price_str}`\n"
-            f"- **حجم ۲۴ ساعته:** `{volume_str}`\n"
-            f"- **تایم‌فریم تحلیل:** `{signal.get('timeframe', 'N/A')}`\n\n"
-            f"**قرارداد:** `{signal.get('address', 'N/A')}`"
-        )
-        return caption
+           # Build caption using new analytical format
+           caption = self._build_analytical_caption(signal, token)
+           
+           # Add onchain analysis button
+           keyboard = [[
+               InlineKeyboardButton(text="📊 تحلیل آنچین", callback_data=f"onchain_{signal.get('address')}"),
+               InlineKeyboardButton(text="🧠 تحلیل AI", callback_data=f"ai_analyze_{signal.get('address')}")
+           ]]
+           reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-    async def send_signal(self, signal: Dict, df: pd.DataFrame):
-        """Send trading signal using the new creative format."""
-        try:
-            async for session in get_db():
-                result = await session.execute(select(User).where(User.is_subscribed == True))
-                subscribed_users = result.scalars().all()
-            
-            if not subscribed_users:
-                logger.warning("No subscribed users found")
-                return
+           # Generate chart
+           chart_bytes = chart_generator.create_signal_chart(df, signal)
+           
+           # Determine if we should reply to existing message
+           reply_to_message_id = None
+           if token.message_id and token.reply_count < 10:
+               reply_to_message_id = token.message_id
+               
+           sent_count = 0
+           first_message_id = None
+           before_file_id = None
+           
+           for user in subscribed_users:
+               try:
+                   if chart_bytes:
+                       photo = BufferedInputFile(chart_bytes, filename=f"{signal.get('token', 'chart')}.png")
+                       
+                       # Send with or without reply
+                       if reply_to_message_id:
+                           try:
+                               sent_message = await self.bot.send_photo(
+                                   chat_id=user.id,
+                                   photo=photo,
+                                   caption=f"↳ {caption}",  # Add arrow for replies
+                                   parse_mode='Markdown',
+                                   reply_to_message_id=reply_to_message_id
+                               )
+                           except Exception as e:
+                               # If reply fails, send as new message
+                               logger.warning(f"Reply failed for user {user.id}, sending as new message")
+                               sent_message = await self.bot.send_photo(
+                                   chat_id=user.id,
+                                   photo=photo,
+                                   caption=caption,
+                                   parse_mode='Markdown',
+                                   reply_markup=reply_markup
+                               )
+                               reply_to_message_id = None  # Reset for next users
+                       else:
+                           sent_message = await self.bot.send_photo(
+                               chat_id=user.id,
+                               photo=photo,
+                               caption=caption,
+                               parse_mode='Markdown',
+                               reply_markup=reply_markup
+                           )
+                       
+                       # Store first message info
+                       if sent_count == 0:
+                           first_message_id = sent_message.message_id
+                           if sent_message.photo:
+                               before_file_id = sent_message.photo[-1].file_id
+                   else:
+                       # Fallback to text message if chart fails
+                       sent_message = await self.bot.send_message(
+                           chat_id=user.id,
+                           text=caption,
+                           parse_mode='Markdown',
+                           reply_markup=reply_markup,
+                           reply_to_message_id=reply_to_message_id if reply_to_message_id else None
+                       )
+                       if sent_count == 0:
+                           first_message_id = sent_message.message_id
+                   
+                   sent_count += 1
+               except Exception as e:
+                   logger.error(f"Failed to send message to user {user.id}: {e}")
 
-            reply_to_message_id, token_id = None, None
-            async for session in get_db():
-                token_address = signal.get('address')
-                if not token_address:
-                    logger.error("Signal dictionary is missing 'address' key.")
-                    return
-                token_result = await session.execute(select(Token).where(Token.address == token_address))
-                token_record = token_result.scalar_one_or_none()
-                if token_record:
-                    token_id = token_record.id
-                    # Reply chain logic can be added here if needed in the future
-                break
+           # Update token's message tracking
+           if first_message_id:
+               async for session in get_db():
+                   # Update token with message info
+                   if reply_to_message_id:
+                       # It was a reply, increment counter
+                       token.reply_count += 1
+                   else:
+                       # New message thread started
+                       token.message_id = first_message_id
+                       token.reply_count = 1
+                   
+                   # Only create tracking record for first message
+                   if not reply_to_message_id and before_file_id:
+                       new_tracker = SignalResult(
+                           alert_id=None,  # No alert for analytical updates
+                           token_address=signal.get('address'),
+                           token_symbol=signal.get('token'),
+                           signal_price=signal.get('price', 0),
+                           before_chart_file_id=before_file_id,
+                           tracking_status='TRACKING'
+                       )
+                       session.add(new_tracker)
+                       logger.info(f"Started tracking for {signal.get('token')}")
+                   
+                   session.add(token)
+                   await session.commit()
+                   break
 
-            # --- NEW: Build the creative caption ---
-            caption = self._build_signal_caption(signal)
+           logger.info(f"Update sent to {sent_count} users. {'(Reply)' if reply_to_message_id else '(New thread)'}")
 
-            keyboard = [[InlineKeyboardButton(text="🧠 تحلیل هوش مصنوعی", callback_data=f"ai_analyze_{signal.get('address')}")]]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-            chart_bytes = chart_generator.create_signal_chart(df, signal)
-
-            sent_count, before_file_id = 0, None
-            for user in subscribed_users:
-                try:
-                    if chart_bytes:
-                        photo = BufferedInputFile(chart_bytes, filename=f"{signal.get('token', 'chart')}.png")
-                        sent_message = await self.bot.send_photo(
-                            chat_id=user.id,
-                            photo=photo,
-                            caption=caption,
-                            parse_mode='Markdown',
-                            reply_markup=reply_markup
-                        )
-                        if sent_count == 0 and sent_message.photo:
-                            before_file_id = sent_message.photo[-1].file_id
-                    else: # Fallback to text message if chart fails
-                        sent_message = await self.bot.send_message(
-                            chat_id=user.id,
-                            text=caption,
-                            parse_mode='Markdown',
-                            reply_markup=reply_markup
-                        )
-                    
-                    if sent_count == 0:
-                        sent_message_id = sent_message.message_id
-                    sent_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to send message to user {user.id}: {e}")
-
-            # Save alert and tracker record
-            if token_id and before_file_id:
-                async for session in get_db():
-                    new_alert = Alert(
-                        token_id=token_id,
-                        strategy=signal.get('signal_type'),
-                        price_at_alert=signal.get('price', 0),
-                        message_id=sent_message_id,
-                        chat_id=subscribed_users[0].id,
-                        timestamp=datetime.utcnow()
-                    )
-                    session.add(new_alert)
-                    await session.flush()
-
-                    # --- BUG FIX: Use 'tracking_status' instead of 'status' ---
-                    new_tracker = SignalResult(
-                        alert_id=new_alert.id,
-                        token_address=signal.get('address'),
-                        token_symbol=signal.get('token'),
-                        signal_price=signal.get('price', 0),
-                        before_chart_file_id=before_file_id,
-                        tracking_status='TRACKING' # Corrected field name
-                    )
-                    session.add(new_tracker)
-                    logger.info(f"Started tracking signal for {signal.get('token')} with file_id {before_file_id}")
-                    await session.commit()
-                    break
-
-            logger.info(f"Signal send process completed. Sent to {sent_count} users.")
-
-        except Exception as e:
-            logger.error(f"A critical error occurred in send_signal: {e}", exc_info=True)
+       except Exception as e:
+           logger.error(f"Critical error in send_signal: {e}", exc_info=True)
 
 telegram_sender = TelegramSender()
