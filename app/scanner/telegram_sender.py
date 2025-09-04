@@ -178,8 +178,6 @@ class TelegramSender:
                        token.reply_count = 1
                    
                    # Check if token already has active tracking
-                   from app.database.models import SignalResult
-                   from sqlalchemy import select
                    
                    existing_tracker_result = await session.execute(
                        select(SignalResult).where(
