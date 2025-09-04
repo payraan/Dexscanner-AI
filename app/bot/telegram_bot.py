@@ -184,6 +184,7 @@ class TelegramBot:
                 await callback.message.reply("❌ داده‌های آنچین در حال حاضر در دسترس نیست.")
                 return
 
+            # ساخت متن پاسخ
             text = "📊 **تحلیل آنچین**\n\n"
 
             if holder_stats:
@@ -191,26 +192,30 @@ class TelegramBot:
                 text += f"💎 **توزیع هولدرها:**\n"
                 if total_holders is not None:
                     try:
-                        # --- شروع تغییرات ---
-                        # 1. داده را به عدد صحیح تبدیل می‌کنیم
                         total_holders_int = int(total_holders)
-                        # 2. از متغیر تبدیل شده در فرمت‌بندی استفاده می‌کنیم
                         text += f"• تعداد کل هولدرها: `{total_holders_int:,}`\n"
                     except (ValueError, TypeError):
-                        # 3. اگر تبدیل ممکن نبود، همان مقدار اولیه را بدون فرمت نمایش می‌دهیم
                         text += f"• تعداد کل هولدرها: `{total_holders}`\n"
-                        # --- پایان تغییرات ---
                 text += f"• تمرکز Top 10: `{concentration}%`\n"
                 text += f"• امتیاز توزیع: `{holder_stats.get('distribution_score', 0):.1f}/100`\n\n"
 
-
-            # ... (بقیه کد برای نمایش جریان نقدینگی بدون تغییر باقی می‌ماند) ...
+            # --- بخش اضافه‌شده برای نمایش جریان نقدینگی ---
+            if liquidity_stats:
+                net_flow = liquidity_stats.get('net_flow_24h_usd', 0)
+                stability_ratio = liquidity_stats.get('liquidity_stability_ratio', 0)
+                flow_emoji = "🟢" if net_flow > 0 else "🔴"
+                
+                text += f"💰 **جریان نقدینگی (24h):**\n"
+                text += f"• خالص: {flow_emoji} `${net_flow:,.0f}`\n"
+                text += f"• نسبت پایداری: `{stability_ratio:.2f}`\n"
+            # --- پایان بخش اضافه‌شده ---
 
             await callback.message.reply(text, parse_mode='Markdown')            
 
         except Exception as e:
             logger.error(f"OnChain analysis error: {e}")
             await callback.message.reply("❌ خطا در دریافت داده‌های آنچین")
+
 
     async def support_handler(self, message: Message):
         """Handle /support command"""
