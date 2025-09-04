@@ -32,6 +32,7 @@ class ResultTracker:
         """Main job to track active signals' performance."""
         logger.info("📈 Starting result tracking cycle...")
         async for session in get_db():
+            # JOIN مستقیم با Token برای دریافت تمام اطلاعات در یک کوئری
             result = await session.execute(
                 select(SignalResult, Token)
                 .join(Token, Token.address == SignalResult.token_address)
@@ -41,7 +42,7 @@ class ResultTracker:
 
             for signal, token in tracking_results:
                 try:
-                    # Get the token's pool_id for fetching new data
+                    # دیگر نیازی به کوئری جداگانه برای توکن نیست
                     if not token or not token.pool_id:
                         logger.warning(f"Token or pool_id not found for address {signal.token_address}")
                         continue
