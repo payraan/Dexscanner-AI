@@ -245,12 +245,20 @@ class TelegramBot:
 
         for result in signal_results:
             try:
-                media_group = MediaGroupBuilder(caption=f"📊 توکن: ${result.token_symbol}\n🚀 رشد: +{result.peak_profit_percentage:.2f}%\n⏱️ ثبت شده در: {result.closed_at.strftime('%Y-%m-%d')}")
-                media_group.add(type="photo", media=result.before_chart_file_id)
-                media_group.add(type="photo", media=result.after_chart_file_id)
-                await message.answer_media_group(media=media_group.build())
+                # فقط در صورتی که تصویر نهایی (مونتاژ شده) وجود دارد، آن را نمایش بده
+                if result.after_chart_file_id:
+                    caption = (
+                        f"📊 **توکن:** `${result.token_symbol}`\n"
+                        f"🚀 **رشد:** `+{result.peak_profit_percentage:.2f}%`\n"
+                        f"⏱️ **ثبت شده در:** `{result.closed_at.strftime('%Y-%m-%d')}`"
+                    )
+                    await message.answer_photo(
+                        photo=result.after_chart_file_id,
+                        caption=caption,
+                        parse_mode='Markdown'
+                    )
             except Exception as e:
-                logger.error(f"Error sending media group for result {result.id}: {e}")
+                logger.error(f"Error sending result for {result.id}: {e}")
 
     async def start_polling(self):
         """Start bot polling"""

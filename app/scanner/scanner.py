@@ -101,6 +101,14 @@ class TokenScanner:
                logger.info(f"📨 Sending {len(updates_to_send)} updates in batches...")
                for update_args in updates_to_send:
                    await telegram_sender.send_signal(*update_args)
+    
+                   # فعال‌سازی سیستم Cooldown
+                   analysis_data, _, token = update_args
+                   await token_state_service.record_signal_sent(
+                       analysis_data['address'], 
+                       analysis_data['price']
+                   )
+    
                    await asyncio.sleep(RATE_LIMIT_DELAY)
                
            await session.commit()
