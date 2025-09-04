@@ -178,22 +178,31 @@ class TelegramBot:
             
             holder_stats = await bitquery_service.get_holder_stats(token_address)
             liquidity_stats = await bitquery_service.get_liquidity_stats(token_address)
-            total_holders = await bitquery_service.get_total_holders(token_address) # <<-- خط جدید
+            total_holders = await bitquery_service.get_total_holders(token_address)
 
             if not holder_stats and not liquidity_stats:
                 await callback.message.reply("❌ داده‌های آنچین در حال حاضر در دسترس نیست.")
                 return
 
-            # ساخت متن پاسخ
             text = "📊 **تحلیل آنچین**\n\n"
 
             if holder_stats:
                 concentration = holder_stats.get('top_10_concentration', 'N/A')
                 text += f"💎 **توزیع هولدرها:**\n"
                 if total_holders is not None:
-                    text += f"• تعداد کل هولدرها: `{total_holders:,}`\n" # <<-- خط جدید
+                    try:
+                        # --- شروع تغییرات ---
+                        # 1. داده را به عدد صحیح تبدیل می‌کنیم
+                        total_holders_int = int(total_holders)
+                        # 2. از متغیر تبدیل شده در فرمت‌بندی استفاده می‌کنیم
+                        text += f"• تعداد کل هولدرها: `{total_holders_int:,}`\n"
+                    except (ValueError, TypeError):
+                        # 3. اگر تبدیل ممکن نبود، همان مقدار اولیه را بدون فرمت نمایش می‌دهیم
+                        text += f"• تعداد کل هولدرها: `{total_holders}`\n"
+                        # --- پایان تغییرات ---
                 text += f"• تمرکز Top 10: `{concentration}%`\n"
                 text += f"• امتیاز توزیع: `{holder_stats.get('distribution_score', 0):.1f}/100`\n\n"
+
 
             # ... (بقیه کد برای نمایش جریان نقدینگی بدون تغییر باقی می‌ماند) ...
 
