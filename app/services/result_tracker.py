@@ -9,6 +9,7 @@ from app.scanner.chart_generator import chart_generator
 from app.core.config import settings
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+from app.services.template_composer import template_composer
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class ResultTracker:
             logger.info(f"❌ Signal for {signal.token_symbol} failed to meet profit threshold. Peak: {signal.peak_profit_percentage:.2f}%")
             
     async def _capture_after_chart(self, signal, pool_id):
-        """Generates the 'After' chart for a successful signal and saves the file_id."""
+        """Generates composite before/after images and saves file_ids."""
         try:
             df = await data_provider.fetch_ohlcv(pool_id, limit=200)
             if df is None or df.empty:
@@ -107,23 +108,45 @@ class ResultTracker:
                 'token': signal.token_symbol,
                 'price': signal.peak_price,
                 'address': signal.token_address,
-                'timeframe': '1H' # Default timeframe for display
+                'timeframe': '1H'
             }
-            chart_bytes = chart_generator.create_signal_chart(df, signal_data_for_chart)
+            after_chart_bytes = chart_generator.create_signal_chart(df, signal_data_for_chart)
 
-            if chart_bytes:
-                photo = BufferedInputFile(chart_bytes, filename="after.png")
-                # Send to admin channel to get a persistent file_id
-                sent_message = await self.bot.send_photo(
-                    chat_id=settings.ADMIN_CHANNEL_ID,
-                    photo=photo,
-                    caption=f"📈 After Chart - {signal.token_symbol}\nPeak Profit: +{signal.peak_profit_percentage:.2f}%"
-                )
-                signal.after_chart_file_id = sent_message.photo[-1].file_id
-                logger.info(f"Saved 'After' chart for {signal.token_symbol}")
+            if after_chart_bytes and signal.before_chart_file_id:
+                # Download before chart
+                before_chart_response = await self.bot.get_file(signal.before_chart_file_id)
+                before_chart_bytes = await self.bot.download_file(before_chart_response.file_path)
+            
+                # Create composite images for different platforms
+                composites = {}
+                templates = ['instagram_post', 'instagram_story', 'social_wide']
+            
+                for template_type in templates:
+                    composite_bytes = template_composer.create_composite(
+                        before_chart_bytes.read(),
+                        after_chart_bytes,
+                        signal.token_symbol,
+                        signal.peak_profit_percentage,
+                        template_type
+                    )
+                
+                    if composite_bytes:
+                        photo = BufferedInputFile(composite_bytes, filename=f"{template_type}_{signal.token_symbol}.png")
+                        sent_message = await self.bot.send_photo(
+                            chat_id=settings.ADMIN_CHANNEL_ID,
+                            photo=photo,
+                            caption=f"📈 {template_type.replace('_', ' ').title()} - {signal.token_symbol}\nProfit: +{signal.peak_profit_percentage:.2f}%"
+                        )
+                        composites[template_type] = sent_message.photo[-1].file_id
+            
+                # Save the main composite as after_chart_file_id
+                if 'instagram_post' in composites:
+                    signal.after_chart_file_id = composites['instagram_post']
+                
+                logger.info(f"Generated composite templates for {signal.token_symbol}")
 
         except Exception as e:
-            logger.error(f"Failed to generate 'After' chart for {signal.token_symbol}: {e}", exc_info=True)
+            logger.error(f"Failed to generate composite for {signal.token_symbol}: {e}", exc_info=True)
 
     async def cleanup_old_results(self):
         """Cleans up results that are no longer being tracked."""
