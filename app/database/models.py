@@ -80,6 +80,8 @@ class FibonacciState(Base):
     timeframe = Column(String, nullable=False)
     high_point = Column(Float, nullable=False)
     low_point = Column(Float, nullable=False)
+    high_point_timestamp = Column(DateTime, nullable=True)
+    low_point_timestamp = Column(DateTime, nullable=True)
     target1_price = Column(Float)
     target2_price = Column(Float)
     target3_price = Column(Float)
