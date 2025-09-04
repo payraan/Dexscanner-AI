@@ -102,7 +102,7 @@ class TelegramBot:
                new_user = User(
                    id=user_id,
                    is_subscribed=False,
-                   created_at=datetime.now(timezone.utc)
+                   created_at=datetime.utcnow()
                )
                session.add(new_user)
                await session.commit()
