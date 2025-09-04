@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime
 from sqlalchemy import select, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import FibonacciState
 from scipy.signal import argrelextrema
@@ -42,79 +43,143 @@ class FibonacciEngine:
         
         latest_low_idx = relevant_low_indices[-1]
 
+        # FIX: استخراج درست swing points
         swing_high_point = df['high'].iloc[latest_high_idx]
         swing_low_point = df['low'].iloc[latest_low_idx]
 
         return swing_high_point, swing_low_point
 
-    async def _create_or_update_state(self, session: AsyncSession, token_address: str, timeframe: str, high: float, low: float, existing_state: FibonacciState = None) -> FibonacciState:
-        """یک وضعیت جدید ایجاد یا وضعیت موجود را باطل و وضعیت جدیدی جایگزین می‌کند."""
-        
-        # اگر وضعیت قبلی وجود داشت، آن را منسوخ کن
-        if existing_state:
-            existing_state.status = 'SUPERSEDED' # وضعیتی بهتر از "INVALIDATED"
-
-        price_range = high - low
-        if price_range <= 0:
-            return None
-
-        new_state = FibonacciState(
-            token_address=token_address,
-            timeframe=timeframe,
-            high_point=high,
-            low_point=low,
-            target1_price=high + (price_range * (FIB_EXT_LEVELS['target1'] - 1.0)),
-            target2_price=high + (price_range * (FIB_EXT_LEVELS['target2'] - 1.0)),
-            target3_price=high + (price_range * (FIB_EXT_LEVELS['target3'] - 1.0)),
-            status='ACTIVE',
-        )
-        session.add(new_state)
-        await session.commit()
-        logger.info(f"🔄 Fibonacci state for {token_address} has been updated/created. New Wave: (H: {high}, L: {low})")
-        return new_state
-
     async def get_or_create_state(self, session: AsyncSession, token_address: str, timeframe: str, df: pd.DataFrame) -> FibonacciState:
         """
-        موتور اصلی و کاملاً پویای فیبوناچی.
+        موتور اصلی فیبوناچی با PostgreSQL UPSERT pattern
         """
-        # ۱. آخرین سقف و کف مهم را از روی چارت فعلی پیدا کن
-        current_swing_high, current_swing_low = self._find_latest_swing_points(df)
+        try:
+            current_swing_high, current_swing_low = self._find_latest_swing_points(df)
+            current_price = df['close'].iloc[-1]
 
-        if not current_swing_high or not current_swing_low:
-            logger.warning(f"Could not determine a valid swing wave for {token_address}.")
+            # اگر موج معتبری پیدا نشد، state موجود را برگردان (در صورت وجود)
+            if not current_swing_high or not current_swing_low:
+                query = select(FibonacciState).where(
+                    and_(
+                        FibonacciState.token_address == token_address,
+                        FibonacciState.timeframe == timeframe
+                    )
+                )
+                result = await session.execute(query)
+                existing_state = result.scalar_one_or_none()
+                
+                if existing_state:
+                    # حتی اگر موج جدید نداشتیم، status را بر اساس قیمت فعلی آپدیت کن
+                    self._update_status_based_on_price(existing_state, current_price)
+                    await session.commit()
+                
+                return existing_state
+
+            # محاسبه تارگت‌ها
+            price_range = current_swing_high - current_swing_low
+            if price_range <= 0:
+                logger.warning(f"Invalid price range for {token_address}: {price_range}")
+                return None
+
+            target1_price = current_swing_high + (price_range * (FIB_EXT_LEVELS['target1'] - 1.0))
+            target2_price = current_swing_high + (price_range * (FIB_EXT_LEVELS['target2'] - 1.0))
+            target3_price = current_swing_high + (price_range * (FIB_EXT_LEVELS['target3'] - 1.0))
+
+            # تعیین status بر اساس قیمت فعلی
+            if current_price >= target3_price:
+                status = 'COMPLETED'
+            elif current_price >= target2_price:
+                status = 'TARGET_2_HIT'
+            elif current_price >= target1_price:
+                status = 'TARGET_1_HIT'
+            else:
+                status = 'ACTIVE'
+
+            # PostgreSQL UPSERT using ON CONFLICT
+            # ابتدا سعی می‌کنیم رکورد جدید بسازیم
+            new_state = FibonacciState(
+                token_address=token_address,
+                timeframe=timeframe,
+                high_point=float(current_swing_high),
+                low_point=float(current_swing_low),
+                target1_price=float(target1_price),
+                target2_price=float(target2_price),
+                target3_price=float(target3_price),
+                status=status,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+
+            try:
+                session.add(new_state)
+                await session.commit()
+                logger.info(f"Created new Fibonacci state for {token_address}")
+                return new_state
+
+            except IntegrityError:
+                # رکورد از قبل وجود دارد، آن را آپدیت کن
+                await session.rollback()
+                
+                # رکورد موجود را پیدا کن
+                query = select(FibonacciState).where(
+                    and_(
+                        FibonacciState.token_address == token_address,
+                        FibonacciState.timeframe == timeframe
+                    )
+                )
+                result = await session.execute(query)
+                existing_state = result.scalar_one_or_none()
+
+                if existing_state:
+                    # فقط در صورت تغییر موج، آپدیت کن
+                    wave_changed = (
+                        abs(existing_state.high_point - current_swing_high) > 1e-9 or
+                        abs(existing_state.low_point - current_swing_low) > 1e-9
+                    )
+                    
+                    if wave_changed:
+                        existing_state.high_point = float(current_swing_high)
+                        existing_state.low_point = float(current_swing_low)
+                        existing_state.target1_price = float(target1_price)
+                        existing_state.target2_price = float(target2_price)
+                        existing_state.target3_price = float(target3_price)
+                        existing_state.updated_at = datetime.utcnow()
+                        logger.info(f"Updated Fibonacci wave for {token_address}")
+                    
+                    # همیشه status را آپدیت کن
+                    if existing_state.status != status:
+                        existing_state.status = status
+                        existing_state.updated_at = datetime.utcnow()
+                    
+                    await session.commit()
+                    return existing_state
+                else:
+                    logger.error(f"Race condition: could not find or create state for {token_address}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"Unexpected error in get_or_create_state for {token_address}: {e}", exc_info=True)
+            await session.rollback()
             return None
 
-        # ۲. آخرین وضعیت ذخیره شده در دیتابیس را بگیر
-        query = select(FibonacciState).where(
-            and_(
-                FibonacciState.token_address == token_address,
-                FibonacciState.timeframe == timeframe
-            )
-        ).order_by(FibonacciState.created_at.desc()).limit(1)
-        result = await session.execute(query)
-        latest_db_state = result.scalar_one_or_none()
-
-        # ۳. تصمیم‌گیری اصلی: آیا باید فیبوناچی را آپدیت کنیم؟
-        # اگر هیچ وضعیتی در دیتابیس نیست، یا موج قیمت تغییر کرده، یک وضعیت جدید بساز
-        if not latest_db_state or \
-           abs(latest_db_state.high_point - current_swing_high) > 1e-9 or \
-           abs(latest_db_state.low_point - current_swing_low) > 1e-9:
-            
-            return await self._create_or_update_state(session, token_address, timeframe, current_swing_high, current_swing_low, latest_db_state)
-
-        # ۴. اگر موج قیمت تغییر نکرده، فقط وضعیت تارگت‌ها را آپدیت کن
-        current_price = df['close'].iloc[-1]
+    def _update_status_based_on_price(self, state: FibonacciState, current_price: float):
+        """
+        Status را بر اساس قیمت فعلی به‌روزرسانی می‌کند
+        """
+        new_status = None
         
-        if latest_db_state.status == 'ACTIVE' and latest_db_state.target1_price and current_price >= latest_db_state.target1_price:
-            latest_db_state.status = 'TARGET_1_HIT'
-        elif latest_db_state.status == 'TARGET_1_HIT' and latest_db_state.target2_price and current_price >= latest_db_state.target2_price:
-            latest_db_state.status = 'TARGET_2_HIT'
-        elif latest_db_state.status == 'TARGET_2_HIT' and latest_db_state.target3_price and current_price >= latest_db_state.target3_price:
-            latest_db_state.status = 'COMPLETED'
+        if state.target3_price and current_price >= state.target3_price:
+            new_status = 'COMPLETED'
+        elif state.target2_price and current_price >= state.target2_price:
+            new_status = 'TARGET_2_HIT'
+        elif state.target1_price and current_price >= state.target1_price:
+            new_status = 'TARGET_1_HIT'
+        else:
+            new_status = 'ACTIVE'
         
-        await session.commit()
-
-        return latest_db_state
+        if state.status != new_status:
+            state.status = new_status
+            state.updated_at = datetime.utcnow()
 
 # یک نمونه از کلاس می‌سازیم تا در همه جا از همین یک نمونه استفاده شود
 fibonacci_engine = FibonacciEngine()
