@@ -3,7 +3,6 @@ import logging
 from typing import List, Dict
 
 # --- NEW: Import the EventEngine and the Token model ---
-from app.scanner.strategies import event_engine
 from app.database.models import Token, Blacklist
 # --- END NEW ---
 

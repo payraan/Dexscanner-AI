@@ -177,10 +177,22 @@ class TelegramSender:
                        token.message_id = first_message_id
                        token.reply_count = 1
                    
-                   # Only create tracking record for first message
-                   if not reply_to_message_id and before_file_id:
+                   # Check if token already has active tracking
+                   from app.database.models import SignalResult
+                   from sqlalchemy import select
+                   
+                   existing_tracker_result = await session.execute(
+                       select(SignalResult).where(
+                           SignalResult.token_address == signal.get('address'),
+                           SignalResult.tracking_status == 'TRACKING'
+                       )
+                   )
+                   existing_tracker = existing_tracker_result.scalar_one_or_none()
+                   
+                   # Create tracker if none exists and chart is available
+                   if not existing_tracker and before_file_id:
                        new_tracker = SignalResult(
-                           alert_id=None,  # No alert for analytical updates
+                           alert_id=None,
                            token_address=signal.get('address'),
                            token_symbol=signal.get('token'),
                            signal_price=signal.get('price', 0),
@@ -188,7 +200,7 @@ class TelegramSender:
                            tracking_status='TRACKING'
                        )
                        session.add(new_tracker)
-                       logger.info(f"Started tracking for {signal.get('token')}")
+                       logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
                    
                    await session.commit()
                    break
