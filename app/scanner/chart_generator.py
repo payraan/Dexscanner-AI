@@ -17,8 +17,9 @@ class ChartGenerator:
         price_range = high - low
         if price_range <= 0:
             return {}
-        # فقط سطوح تعریف شده در لیست اصلی را محاسبه می‌کنیم
-        return {level: high - (price_range * level) for level in FIB_RETRACEMENT_LEVELS}
+        # سطوح کلیدی 0.0 و 1.0 را برای نمایش مرزهای بالا و پایین اضافه می‌کنیم
+        levels_to_calc = [0.0] + FIB_RETRACEMENT_LEVELS + [1.0]
+        return {level: high - (price_range * level) for level in levels_to_calc}
 
     def _draw_fibonacci_levels(self, ax, fib_state: Dict):
         """فیبوناچی اصلاحی و تارگت‌ها را بر روی نمودار رسم می‌کند."""
