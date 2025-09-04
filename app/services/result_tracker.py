@@ -33,17 +33,15 @@ class ResultTracker:
         logger.info("📈 Starting result tracking cycle...")
         async for session in get_db():
             result = await session.execute(
-                select(SignalResult).where(SignalResult.tracking_status == STATUS_TRACKING)
+                select(SignalResult, Token)
+                .join(Token, Token.address == SignalResult.token_address)
+                .where(SignalResult.tracking_status == STATUS_TRACKING)
             )
-            tracking_signals = result.scalars().all()
+            tracking_results = result.all()
 
-            for signal in tracking_signals:
+            for signal, token in tracking_results:
                 try:
                     # Get the token's pool_id for fetching new data
-                    token_result = await session.execute(
-                        select(Token).where(Token.address == signal.token_address)
-                    )
-                    token = token_result.scalar_one_or_none()
                     if not token or not token.pool_id:
                         logger.warning(f"Token or pool_id not found for address {signal.token_address}")
                         continue
