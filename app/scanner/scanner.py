@@ -30,105 +30,105 @@ RANGING_TIMEOUT = timedelta(hours=2)  # حداکثر زمان در حالت rang
 MIN_UPDATE_INTERVAL = timedelta(minutes=30)  # حداقل فاصله بین آپدیت‌ها
 
 class TokenScanner:
-    def __init__(self):
-        self.running = False
-        self.scan_count = 0
+   def __init__(self):
+       self.running = False
+       self.scan_count = 0
 
-    async def _monitor_and_process_events(self, tokens_from_api: List[Dict]):
-        """
-        Monitors tokens and sends updates for all healthy tokens.
-        """
-        async for session in get_db():
-            updates_to_send = []
+   async def _monitor_and_process_events(self, tokens_from_api: List[Dict]):
+       """
+       Monitors tokens and sends updates for all healthy tokens.
+       """
+       async for session in get_db():
+           updates_to_send = []
 
-            # Reset cooldown tokens at the beginning of each monitoring cycle
-            await token_state_service.reset_cooled_down_tokens(session)
+           # Reset cooldown tokens at the beginning of each monitoring cycle
+           await token_state_service.reset_cooled_down_tokens(session)
 
-            for token_data in tokens_from_api:
-                # Check if token is blacklisted
-                blacklist_check = await session.execute(
-                    select(Blacklist).where(Blacklist.token_address == token_data['address'])
-                )
-                if blacklist_check.scalar_one_or_none():
-                    logger.info(f"⛔ Skipping blacklisted token: {token_data.get('symbol', 'Unknown')}")
-                    continue
+           for token_data in tokens_from_api:
+               # Check if token is blacklisted
+               blacklist_check = await session.execute(
+                   select(Blacklist).where(Blacklist.token_address == token_data['address'])
+               )
+               if blacklist_check.scalar_one_or_none():
+                   logger.info(f"⛔ Skipping blacklisted token: {token_data.get('symbol', 'Unknown')}")
+                   continue
 
-                # Get token record
-                token_record_result = await session.execute(
-                    select(Token).where(Token.address == token_data['address'])
-                )
-                token = token_record_result.scalar_one_or_none()
-                if not token:
-                    logger.warning(f"Token {token_data['symbol']} not found in DB, skipping.")
-                    continue
+               # Get token record
+               token_record_result = await session.execute(
+                   select(Token).where(Token.address == token_data['address'])
+               )
+               token = token_record_result.scalar_one_or_none()
+               if not token:
+                   logger.warning(f"Token {token_data['symbol']} not found in DB, skipping.")
+                   continue
 
-                current_price = token_data.get('price_usd', 0)
-                should_send_update = False
+               current_price = token_data.get('price_usd', 0)
+               should_send_update = False
 
-                # Skip tokens in cooldown
-                if token.state in ['SIGNALED', 'COOLDOWN']:
-                    continue
+               # Skip tokens in cooldown
+               if token.state in ['SIGNALED', 'COOLDOWN']:
+                   continue
 
-                # First scan logic
-                if not token.last_scan_price:
-                    should_send_update = True
-                    token.state = 'WATCHING'
-                    logger.info(f"🆕 First scan for {token.symbol}")
-                else:
-                    # Calculate price change
-                    last_price = token.last_scan_price
-                    price_change_percent = ((current_price - last_price) / last_price) * 100
-                    time_since_last_update = datetime.utcnow() - token.last_state_change
+               # First scan logic
+               if not token.last_scan_price:
+                   should_send_update = True
+                   token.state = 'WATCHING'
+                   logger.info(f"🆕 First scan for {token.symbol}")
+               else:
+                   # Calculate price change
+                   last_price = token.last_scan_price
+                   price_change_percent = ((current_price - last_price) / last_price) * 100
+                   time_since_last_update = datetime.utcnow() - token.last_state_change
 
-                    # Ranging logic with time component
-                    if token.state == 'RANGING':
-                        if abs(price_change_percent) > BREAKOUT_THRESHOLD or time_since_last_update > RANGING_TIMEOUT:
-                            should_send_update = True
-                            if token.state != 'TRENDING':
-                                token.state = 'TRENDING'
-                                token.last_state_change = datetime.utcnow()
-                            logger.info(f"📈 {token.symbol} broke out of range!")
-                    elif abs(price_change_percent) < RANGING_THRESHOLD:
-                        if token.state != 'RANGING':
-                            token.state = 'RANGING'
-                            logger.info(f"😴 {token.symbol} entered ranging state")
-                            token.last_state_change = datetime.utcnow()
-                    else:  # WATCHING or TRENDING state
-                        # اگر توکن در این وضعیت‌ها باشد و نوسان کافی داشته باشد، همیشه آپدیت ارسال می‌شود
-                        should_send_update = True
-                        if token.state != 'TRENDING':
-                            token.state = 'TRENDING'
-                            token.last_state_change = datetime.utcnow()
+                   # Ranging logic with time component
+                   if token.state == 'RANGING':
+                       if abs(price_change_percent) > BREAKOUT_THRESHOLD or time_since_last_update > RANGING_TIMEOUT:
+                           should_send_update = True
+                           if token.state != 'TRENDING':
+                               token.state = 'TRENDING'
+                               token.last_state_change = datetime.utcnow()
+                           logger.info(f"📈 {token.symbol} broke out of range!")
+                   elif abs(price_change_percent) < RANGING_THRESHOLD:
+                       if token.state != 'RANGING':
+                           token.state = 'RANGING'
+                           logger.info(f"😴 {token.symbol} entered ranging state")
+                           token.last_state_change = datetime.utcnow()
+                   else:  # WATCHING or TRENDING state
+                       # اگر توکن در این وضعیت‌ها باشد و نوسان کافی داشته باشد، همیشه آپدیت ارسال می‌شود
+                       should_send_update = True
+                       if token.state != 'TRENDING':
+                           token.state = 'TRENDING'
+                           token.last_state_change = datetime.utcnow()
 
-                if should_send_update:
-                    # Get analysis data
-                    analysis_data, df = await analysis_engine.analyze_token(token_data)
-                    if analysis_data and df is not None:
-                        updates_to_send.append((analysis_data, df, token))
-                        token.last_scan_price = current_price
-                        # Note: last_state_change is now only updated on actual state changes
-                        logger.info(f"📤 Queued update for {token.symbol}")
+               if should_send_update:
+                   # Get analysis data
+                   analysis_data, df = await analysis_engine.analyze_token(token_data)
+                   if analysis_data and df is not None:
+                       updates_to_send.append((analysis_data, df, token))
+                       token.last_scan_price = current_price
+                       # Note: last_state_change is now only updated on actual state changes
+                       logger.info(f"📤 Queued update for {token.symbol}")
 
-            # Batch sending with rate limiting
-            if updates_to_send:
-                logger.info(f"📨 Sending {len(updates_to_send)} updates in batches...")
-                for update_args in updates_to_send:
-                    # --- ایمن‌سازی حلقه ارسال ---
-                    try:
-                        await telegram_sender.send_signal(*update_args)
+           # Batch sending with rate limiting
+           if updates_to_send:
+               logger.info(f"📨 Sending {len(updates_to_send)} updates in batches...")
+               for update_args in updates_to_send:
+                   # --- ایمن‌سازی حلقه ارسال ---
+                   try:
+                       await telegram_sender.send_signal(*update_args)
 
-                        # فعال‌سازی سیستم Cooldown
-                        analysis_data, _, token = update_args
-                        await token_state_service.record_signal_sent(
-                            analysis_data['address'],
-                            analysis_data['price']
-                        )
-                        await asyncio.sleep(RATE_LIMIT_DELAY)
-                    except Exception as e:
-                        logger.error(f"Failed to process update for a token, skipping. Error: {e}", exc_info=True)
-                        continue # ادامه حلقه حتی در صورت بروز خطا برای یک توکن
-                
-            await session.commit()
+                       # فعال‌سازی سیستم Cooldown
+                       analysis_data, _, token = update_args
+                       await token_state_service.record_signal_sent(
+                           analysis_data['address'],
+                           analysis_data['price']
+                       )
+                       await asyncio.sleep(RATE_LIMIT_DELAY)
+                   except Exception as e:
+                       logger.error(f"Failed to process update for a token, skipping. Error: {e}", exc_info=True)
+                       continue # ادامه حلقه حتی در صورت بروز خطا برای یک توکن
+               
+           await session.commit()
 
    async def start_scanning(self):
        """Main scanning loop - now simplified to an event monitoring loop."""
