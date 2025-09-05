@@ -107,7 +107,7 @@ class TokenScanner:
                        updates_to_send.append((analysis_data, df, token))
                        token.last_scan_price = current_price
                        # Note: last_state_change is now only updated on actual state changes
-                       logger.info(f"📤 Queued update for {token.symbol}")
+                       logger.info(f"📤 Queued update for {token_data.get('symbol', 'Unknown')}")
 
            # Batch sending with rate limiting
            if updates_to_send:
