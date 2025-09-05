@@ -37,7 +37,7 @@ class TokenStateService:
         A signal can only be sent if the token is in the 'WATCHING' state.
         """
         async for session in get_db():
-            await self._reset_cooled_down_tokens(session)
+            await self.reset_cooled_down_tokens(session)
 
             result = await session.execute(
                 select(Token).where(Token.address == token_address)
@@ -67,7 +67,7 @@ class TokenStateService:
             await session.commit()
             logger.info(f"🧠 Token state updated to SIGNALED for {token_address}")
 
-    async def _reset_cooled_down_tokens(self, session):
+    async def reset_cooled_down_tokens(self, session):
         """
         Finds tokens in SIGNALED/COOLDOWN state whose dynamic cooldown period has passed
         and resets their state to WATCHING.

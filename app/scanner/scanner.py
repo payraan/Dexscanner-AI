@@ -40,6 +40,9 @@ class TokenScanner:
        """
        async for session in get_db():
            updates_to_send = []
+
+           # Reset cooldown tokens at the beginning of each monitoring cycle
+           await token_state_service.reset_cooled_down_tokens(session)
            
            for token_data in tokens_from_api:
                # Check if token is blacklisted
@@ -62,6 +65,10 @@ class TokenScanner:
                current_price = token_data.get('price_usd', 0)
                should_send_update = False
                
+               # Skip tokens in cooldown
+               if token.state in ['SIGNALED', 'COOLDOWN']:
+                   continue
+
                # First scan logic
                if not token.last_scan_price:
                    should_send_update = True
@@ -83,9 +90,14 @@ class TokenScanner:
                        if token.state != 'RANGING':
                            token.state = 'RANGING'
                            logger.info(f"😴 {token.symbol} entered ranging state")
+                           token.last_state_change = datetime.utcnow()
+                   
                    else:  # WATCHING or TRENDING state
                        if time_since_last_update > MIN_UPDATE_INTERVAL:
                            should_send_update = True
+                           if token.state != 'TRENDING':
+                               token.state = 'TRENDING'
+                               token.last_state_change = datetime.utcnow()
 
                if should_send_update:
                    # Get analysis data
