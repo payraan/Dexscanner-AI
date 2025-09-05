@@ -4,20 +4,48 @@ from typing import Optional, List, Dict
 import asyncio
 import hashlib
 from app.services.redis_client import redis_client
-# --- این دو خط باید اضافه شوند ---
 import logging
+
 logger = logging.getLogger(__name__)
-# ---------------------------------
 
 class DataProvider:
     def __init__(self):
         self.base_url = "https://api.geckoterminal.com/api/v2"
-        
+        self.max_retries = 5
+        self.initial_backoff = 1.0
+
+    async def _api_request_handler(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+        """
+        Handles API requests with caching, rate limiting, and exponential backoff.
+        """
+        for attempt in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(url, params=params)
+
+                    if response.status_code == 200:
+                        return response.json()
+                    elif response.status_code == 429:
+                        backoff_time = self.initial_backoff * (2 ** attempt)
+                        logger.warning(f"Rate limit hit for {url}. Retrying in {backoff_time:.2f} seconds...")
+                        await asyncio.sleep(backoff_time)
+                    else:
+                        logger.error(f"API Error: {response.status_code} for URL {url}. Response: {response.text[:200]}")
+                        return None
+            except httpx.RequestError as e:
+                logger.error(f"HTTP request failed for {url}: {e}")
+                if attempt >= self.max_retries - 1:
+                    return None
+                await asyncio.sleep(self.initial_backoff * (2 ** attempt))
+
+        logger.error(f"Failed to fetch data from {url} after {self.max_retries} retries.")
+        return None
+
     def _generate_cache_key(self, endpoint: str, params: dict) -> str:
         """Generate unique cache key for API request"""
         cache_string = f"{endpoint}_{str(sorted(params.items()))}"
         return hashlib.md5(cache_string.encode()).hexdigest()
-        
+
     async def fetch_trending_tokens(self, limit: int = 50) -> List[Dict]:
         """Fetch trending tokens with Redis caching"""
         url = f"{self.base_url}/networks/solana/trending_pools"
@@ -25,82 +53,60 @@ class DataProvider:
             'include': 'base_token,quote_token',
             'limit': str(limit)
         }
-        
-        # Check cache first
+
         cache_key = self._generate_cache_key("trending_pools", params)
         cached_data = await redis_client.get(cache_key)
-        
         if cached_data:
             return cached_data
-        
-        # Fetch from API if not cached
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    processed_data = self._process_trending_data(data)
-                    
-                    # Cache for 60 seconds
-                    await redis_client.set(cache_key, processed_data, ttl=60)
-                    return processed_data
-        except Exception as e:
-            print(f"Error fetching trending tokens: {e}")
+
+        data = await self._api_request_handler(url, params=params)
+        if data:
+            processed_data = self._process_trending_data(data)
+            await redis_client.set(cache_key, processed_data, ttl=60)
+            return processed_data
         return []
-    
-    async def fetch_ohlcv(self, pool_id: str, timeframe: str = "hour", 
+
+    async def fetch_ohlcv(self, pool_id: str, timeframe: str = "hour",
                          aggregate: str = "1", limit: int = 200) -> Optional[pd.DataFrame]:
         """Fetch OHLCV data with Redis caching"""
         network, pool_address = pool_id.split('_')
         url = f"{self.base_url}/networks/{network}/pools/{pool_address}/ohlcv/{timeframe}"
-        
         params = {
             'aggregate': aggregate,
             'limit': str(limit)
         }
-        
-        # Check cache first
+
         cache_key = self._generate_cache_key(f"ohlcv_{pool_id}_{timeframe}", params)
         cached_data = await redis_client.get(cache_key)
-        
         if cached_data:
             return pd.DataFrame(cached_data)
-        
-        # Fetch from API if not cached
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    df = self._process_ohlcv_data(data)
-                    
-                    if not df.empty:
-                        # Cache for 120 seconds
-                        await redis_client.set(cache_key, df.to_dict('records'), ttl=120)
-                    return df
-        except Exception as e:
-            print(f"Error fetching OHLCV data: {e}")
+
+        data = await self._api_request_handler(url, params=params)
+        if data:
+            df = self._process_ohlcv_data(data)
+            if not df.empty:
+                await redis_client.set(cache_key, df.to_dict('records'), ttl=120)
+            return df
         return None
-    
+
     def _process_trending_data(self, data: Dict) -> List[Dict]:
         """Process trending data response"""
         tokens = []
         pools = data.get('data', [])
         included = data.get('included', [])
-        
-        # Create token map
-        token_map = {item.get('id'): item.get('attributes', {}) 
+
+        token_map = {item.get('id'): item.get('attributes', {})
                      for item in included if item.get('type') == 'token'}
-        
+
         for pool in pools:
             try:
                 attributes = pool.get('attributes', {})
                 relationships = pool.get('relationships', {})
-                
+
                 base_token_rel = relationships.get('base_token', {}).get('data', {})
                 base_token_id = base_token_rel.get('id', '')
                 token_attrs = token_map.get(base_token_id, {})
-                
+
                 token_address = token_attrs.get('address')
                 base_token_price = attributes.get('base_token_price_usd')
 
@@ -117,15 +123,15 @@ class DataProvider:
                     'price_usd': float(base_token_price)
                 }
                 tokens.append(token_data)
-            except (ValueError, TypeError, KeyError) as e:
+            except (ValueError, TypeError, KeyError):
                 continue
-        
+
         return tokens
-    
+
     def _process_ohlcv_data(self, data: Dict) -> pd.DataFrame:
         """Process OHLCV data response"""
         ohlcv_list = data.get('data', {}).get('attributes', {}).get('ohlcv_list', [])
-        
+
         df_data = []
         for candle in ohlcv_list:
             timestamp, open_price, high, low, close, volume = candle
@@ -137,42 +143,34 @@ class DataProvider:
                 'close': float(close),
                 'volume': float(volume)
             })
-        
+
         df = pd.DataFrame(df_data)
         if not df.empty:
             df = df.sort_values('timestamp').reset_index(drop=True)
-        
+
         return df
 
     async def fetch_pool_details(self, pool_id: str) -> Optional[Dict]:
         """
-        اطلاعات کامل یک استخر (pool) از جمله تاریخ دقیق ایجاد آن را دریافت می‌کند.
-        این تابع به صورت هوشمند نتایج را در ردیس کش می‌کند تا از درخواست‌های تکراری جلوگیری شود.
+        Fetches full pool details including creation date.
+        This function intelligently caches results in Redis to avoid repeated requests.
         """
         network, pool_address = pool_id.split('_')
         url = f"{self.base_url}/networks/{network}/pools/{pool_address}"
-        
-        # ابتدا کش را برای این pool_id بررسی می‌کنیم
+
         cache_key = f"pool_details_{pool_id}"
         cached_data = await redis_client.get(cache_key)
         if cached_data:
             logger.info(f"Using cached pool details for {pool_id}")
             return cached_data
-            
-        # اگر در کش نبود، درخواست جدید به API ارسال می‌شود
+
         logger.info(f"Fetching new pool details from API for {pool_id}")
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(url)
-                if response.status_code == 200:
-                    # فقط بخش attributes که حاوی تاریخ است را استخراج می‌کنیم
-                    data = response.json().get('data', {}).get('attributes', {})
-                    if data:
-                        # نتیجه را برای ۲۴ ساعت در ردیس کش می‌کنیم
-                        await redis_client.set(cache_key, data, ttl=86400)
-                    return data
-        except Exception as e:
-            logger.error(f"Error fetching pool details for {pool_id}: {e}")
+        data = await self._api_request_handler(url)
+        if data:
+            attributes = data.get('data', {}).get('attributes', {})
+            if attributes:
+                await redis_client.set(cache_key, attributes, ttl=86400)
+            return attributes
         return None
 
 data_provider = DataProvider()
