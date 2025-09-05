@@ -16,6 +16,7 @@ from app.scanner.token_health import token_health_checker
 from app.services.bitquery_service import bitquery_service
 from app.database.session import get_db
 from sqlalchemy import select
+from sqlalchemy.orm import undefer
 
 from datetime import datetime, timedelta
 
@@ -55,8 +56,9 @@ class TokenScanner:
 
                # Get token record
                token_record_result = await session.execute(
-                   select(Token).where(Token.address == token_data['address'])
+                   select(Token).where(Token.address == token_data['address']).options(undefer("*"))
                )
+ 
                token = token_record_result.scalar_one_or_none()
                if not token:
                    logger.warning(f"Token {token_data['symbol']} not found in DB, skipping.")
