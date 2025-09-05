@@ -75,12 +75,11 @@ class TelegramSender:
        
        return caption
 
-   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token):
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, session):
        """Send analytical update (renamed from signal for compatibility)"""
        try:
-           async for session in get_db():
-               result = await session.execute(select(User).where(User.is_subscribed == True))
-               subscribed_users = result.scalars().all()
+           result = await session.execute(select(User).where(User.is_subscribed == True))
+           subscribed_users = result.scalars().all()
            
            if not subscribed_users:
                logger.warning("No subscribed users found")
@@ -167,15 +166,14 @@ class TelegramSender:
 
            # Update token's message tracking
            if first_message_id:
-               async for session in get_db():
-                   # Update token with message info
-                   if reply_to_message_id:
-                       # It was a reply, increment counter
-                       token.reply_count += 1
-                   else:
-                       # New message thread started
-                       token.message_id = first_message_id
-                       token.reply_count = 1
+               # Update token with message info
+               if reply_to_message_id:
+                   # It was a reply, increment counter
+                   token.reply_count += 1
+               else:
+                   # New message thread started
+                   token.message_id = first_message_id
+                   token.reply_count = 1
                    
                    # Check if token already has active tracking
                    
@@ -200,9 +198,6 @@ class TelegramSender:
                        session.add(new_tracker)
                        logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
                    
-                   await session.commit()
-                   break
-
            logger.info(f"Update sent to {sent_count} users. {'(Reply)' if reply_to_message_id else '(New thread)'}")
 
        except Exception as e:

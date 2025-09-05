@@ -49,23 +49,21 @@ class TokenStateService:
             
             return token.state == STATE_WATCHING
 
-    async def record_signal_sent(self, token_address: str, signal_price: float):
+    async def record_signal_sent(self, token_address: str, signal_price: float, session):
         """
         Updates the token's state to SIGNALED and sets the cooldown period.
         """
-        async for session in get_db():
-            stmt = (
-                update(Token)
-                .where(Token.address == token_address)
-                .values(
-                    state=STATE_SIGNALED,
-                    last_signal_price=signal_price,
-                    last_state_change=datetime.utcnow()
-                )
+        stmt = (
+            update(Token)
+            .where(Token.address == token_address)
+            .values(
+                state=STATE_SIGNALED,
+                last_signal_price=signal_price,
+                last_state_change=datetime.utcnow()
             )
-            await session.execute(stmt)
-            await session.commit()
-            logger.info(f"🧠 Token state updated to SIGNALED for {token_address}")
+        )
+        await session.execute(stmt)
+        logger.info(f"🧠 Token state updated to SIGNALED for {token_address}")
 
     async def reset_cooled_down_tokens(self, session):
         """

@@ -90,7 +90,7 @@ class AnalysisEngine:
         return confluence_zones[:5]
 
 
-    async def analyze_token(self, token_data: Dict) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
+    async def analyze_token(self, token_data: Dict, session) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
         """
         This function now acts as a data preparer for the EventEngine.
         It fetches all necessary data (OHLCV, zones, fibo) and returns them in a structured way.
@@ -120,16 +120,15 @@ class AnalysisEngine:
                 return None, None
 
             fibo_state_dict = None
-            async for session in get_db():
-                fibo_state = await fibonacci_engine.get_or_create_state(
-                    session, token_data['address'], f"{timeframe}_{aggregate}", df
-                )
-                if fibo_state:
-                    fibo_state_dict = {
-                        'high': fibo_state.high_point, 'low': fibo_state.low_point,
-                        'target1': fibo_state.target1_price, 'target2': fibo_state.target2_price,
-                        'target3': fibo_state.target3_price, 'status': fibo_state.status
-                    }
+            fibo_state = await fibonacci_engine.get_or_create_state(
+                session, token_data['address'], f"{timeframe}_{aggregate}", df
+            )
+            if fibo_state:
+                fibo_state_dict = {
+                    'high': fibo_state.high_point, 'low': fibo_state.low_point,
+                    'target1': fibo_state.target1_price, 'target2': fibo_state.target2_price,
+                    'target3': fibo_state.target3_price, 'status': fibo_state.status
+                }
 
             raw_zones = zone_detector.find_support_resistance_zones(df)
             final_zones = self._create_confluence_zones(raw_zones, fibo_state_dict)

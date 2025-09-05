@@ -102,7 +102,7 @@ class TokenScanner:
 
                if should_send_update:
                    # Get analysis data
-                   analysis_data, df = await analysis_engine.analyze_token(token_data)
+                   analysis_data, df = await analysis_engine.analyze_token(token_data, session)
                    if analysis_data and df is not None:
                        updates_to_send.append((analysis_data, df, token))
                        token.last_scan_price = current_price
@@ -115,13 +115,14 @@ class TokenScanner:
                for update_args in updates_to_send:
                    # --- ایمن‌سازی حلقه ارسال ---
                    try:
-                       await telegram_sender.send_signal(*update_args)
+                       await telegram_sender.send_signal(*update_args, session=session)
 
                        # فعال‌سازی سیستم Cooldown
                        analysis_data, _, token = update_args
                        await token_state_service.record_signal_sent(
                            analysis_data['address'],
-                           analysis_data['price']
+                           analysis_data['price'],
+                           session=session
                        )
                        await asyncio.sleep(RATE_LIMIT_DELAY)
                    except Exception as e:
