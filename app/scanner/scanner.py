@@ -66,7 +66,7 @@ class TokenScanner:
             last_price = token.last_scan_price
 
             # Skip tokens in cooldown immediately after loading state
-            if current_state in ['SIGNALED', 'COOLDOWN']:
+            if token.state in ['SIGNALED', 'COOLDOWN']:
                 continue
 
             current_price = token_data.get('price_usd', 0)
@@ -83,7 +83,7 @@ class TokenScanner:
                 time_since_last_update = datetime.utcnow() - token.last_state_change
 
                 # Ranging logic with time component
-                if current_state == 'RANGING':
+                if token.state == 'RANGING':
                     if abs(price_change_percent) > BREAKOUT_THRESHOLD or time_since_last_update > RANGING_TIMEOUT:
                         should_send_update = True
                         if token.state != 'TRENDING':
