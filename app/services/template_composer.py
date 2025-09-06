@@ -20,8 +20,8 @@ class TemplateComposer:
             },
             'instagram_post': {
                 'size': (1080, 1080),
-                'before_position': (40, 200),
-                'after_position': (580, 200),
+                'before_position': (20, 340),
+                'after_position': (340, 560),
                 'before_size': (500, 400),
                 'after_size': (500, 400),
                 'template_file': 'post_template.png'

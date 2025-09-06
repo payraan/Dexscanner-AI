@@ -235,7 +235,7 @@ class TelegramBot:
                 select(SignalResult)
                 .where(SignalResult.tracking_status == 'SUCCESS', SignalResult.is_rugged == False)
                 .order_by(SignalResult.closed_at.desc())
-                .limit(5)
+                .limit(30)
             )
             signal_results = results.scalars().all()
     
