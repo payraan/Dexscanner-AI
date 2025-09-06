@@ -114,43 +114,44 @@ class ResultTracker:
             after_chart_bytes = chart_generator.create_signal_chart(df, signal_data_for_chart)
 
             if after_chart_bytes and signal.before_chart_file_id:
-                # Download before chart
-                before_chart_response = await self.bot.get_file(signal.before_chart_file_id)
-                before_chart_bytes_stream = await self.bot.download_file(before_chart_response.file_path)
-                
-                # Read the content only ONCE
-                before_chart_content = before_chart_bytes_stream.read()
+                try:
+                    # Download before chart
+                    before_chart_response = await self.bot.get_file(signal.before_chart_file_id)
+                    before_chart_bytes_stream = await self.bot.download_file(before_chart_response.file_path)
+                    
+                    # Read the content only ONCE and store it
+                    before_chart_content = before_chart_bytes_stream.read()
 
-                # Create composite images for different platforms
-                composites = {}
-                templates = ['instagram_post', 'instagram_story', 'social_wide']
-            
-                for template_type in templates:
-                    composite_bytes = template_composer.create_composite(
-                        before_chart_content,  # <--- از محتوای ذخیره شده استفاده کن
-                        after_chart_bytes,
-                        signal.token_symbol,
-                        signal.peak_profit_percentage,
-                        template_type
-                    )
+                    # Create composite images for different platforms
+                    composites = {}
+                    templates = ['instagram_post', 'instagram_story', 'social_wide']
                 
-                    if composite_bytes:
-                        photo = BufferedInputFile(composite_bytes, filename=f"{template_type}_{signal.token_symbol}.png")
-                        sent_message = await self.bot.send_photo(
-                            chat_id=settings.ADMIN_CHANNEL_ID,
-                            photo=photo,
-                            caption=f"📈 {template_type.replace('_', ' ').title()} - {signal.token_symbol}\nProfit: +{signal.peak_profit_percentage:.2f}%"
+                    for template_type in templates:
+                        composite_bytes = template_composer.create_composite(
+                            before_chart_content,  # Use the stored content
+                            after_chart_bytes,
+                            signal.token_symbol,
+                            signal.peak_profit_percentage,
+                            template_type
                         )
-                        composites[template_type] = sent_message.photo[-1].file_id
-            
-                # Save the main composite as after_chart_file_id
-                if 'instagram_post' in composites:
-                    signal.after_chart_file_id = composites['instagram_post']
+                    
+                        if composite_bytes:
+                            photo = BufferedInputFile(composite_bytes, filename=f"{template_type}_{signal.token_symbol}.png")
+                            sent_message = await self.bot.send_photo(
+                                chat_id=settings.ADMIN_CHANNEL_ID,
+                                photo=photo,
+                                caption=f"📈 {template_type.replace('_', ' ').title()} - {signal.token_symbol}\nProfit: +{signal.peak_profit_percentage:.2f}%"
+                            )
+                            composites[template_type] = sent_message.photo[-1].file_id
                 
-                logger.info(f"Generated composite templates for {signal.token_symbol}")
+                    # Save the main composite as after_chart_file_id
+                    if 'instagram_post' in composites:
+                        signal.after_chart_file_id = composites['instagram_post']
+                    
+                    logger.info(f"Generated composite templates for {signal.token_symbol}")
 
-        except Exception as e:
-            logger.error(f"Failed to generate composite for {signal.token_symbol}: {e}", exc_info=True)
+                except Exception as e:
+                    logger.error(f"Failed to process composite for {signal.token_symbol}: {e}", exc_info=True)
 
     async def cleanup_old_results(self):
         """Cleans up results that are no longer being tracked."""
