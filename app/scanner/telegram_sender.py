@@ -9,6 +9,7 @@ from typing import Dict
 import logging
 import pandas as pd
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ class TelegramSender:
    def __init__(self):
        self.bot = Bot(token=settings.BOT_TOKEN)
 
-   def _build_analytical_caption(self, signal: Dict, token: Token) -> str:
+   def _build_analytical_caption(self, signal: Dict, last_scan_price: Optional[float], state: str) -> str:
        """
        Build caption for analytical updates (not signals anymore)
        """
@@ -25,21 +26,19 @@ class TelegramSender:
        
        # Calculate price change if we have previous price
        price_change_str = ""
-       if token.last_scan_price and token.last_scan_price > 0:
-           change = ((signal.get('price', 0) - token.last_scan_price) / token.last_scan_price) * 100
+       if last_scan_price and last_scan_price > 0:
+           change = ((signal.get('price', 0) - last_scan_price) / last_scan_price) * 100
     
            if abs(change) < 0.01:
-               # اگر تغییر ناچیز است، چیزی نمایش نده
                price_change_str = " (بدون تغییر)"
            else:
                emoji = "🟢" if change > 0 else "🔴"
-               # استفاده از مقدار مطلق (abs) و حذف علامت + از فرمت
                price_change_str = f" ({emoji} {abs(change):.2f}%)"
        
        # Determine update type
-       if not token.last_scan_price:
+       if not last_scan_price:
            update_type = "🆕 اسکن جدید"
-       elif token.state == 'TRENDING':
+       elif state == 'TRENDING':
            update_type = "📈 آپدیت روند"
        else:
            update_type = "🔄 آپدیت وضعیت"
@@ -86,7 +85,7 @@ class TelegramSender:
                return
 
            # Build caption using new analytical format
-           caption = self._build_analytical_caption(signal, token)
+           caption = self._build_analytical_caption(signal, token.last_scan_price, token.state)
            
            # Add onchain analysis button
            keyboard = [[
