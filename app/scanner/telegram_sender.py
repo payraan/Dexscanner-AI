@@ -74,7 +74,7 @@ class TelegramSender:
        
        return caption
 
-   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], state: str, session):
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], state: str, message_id: Optional[int], reply_count: int, session):
        """Send analytical update (renamed from signal for compatibility)"""
        try:
            result = await session.execute(select(User).where(User.is_subscribed == True))
@@ -97,10 +97,10 @@ class TelegramSender:
            # Generate chart
            chart_bytes = chart_generator.create_signal_chart(df, signal)
            
-           # Determine if we should reply to existing message
+           # Determine if we should reply to existing message using safe local variables
            reply_to_message_id = None
-           if token.message_id and token.reply_count < 10:
-               reply_to_message_id = token.message_id
+           if message_id and reply_count < 10:
+               reply_to_message_id = message_id
                
            sent_count = 0
            first_message_id = None
@@ -164,39 +164,38 @@ class TelegramSender:
                    logger.error(f"Failed to send message to user {user.id}: {e}")
 
            # Update token's message tracking
-               if first_message_id:
-                   # Update token with message info
-                   if reply_to_message_id:
-                       # It was a reply, increment counter and update message_id
-                       token.reply_count += 1
-                       token.message_id = first_message_id
-                   else:
-                       # New message thread started
-                       token.message_id = first_message_id
-                       token.reply_count = 1
-                   
-                   # Check if token already has active tracking
-                   
-                   existing_tracker_result = await session.execute(
-                       select(SignalResult).where(
-                           SignalResult.token_address == signal.get('address'),
-                           SignalResult.tracking_status == 'TRACKING'
-                       )
+           if first_message_id:
+               # Update token with message info
+               if reply_to_message_id:
+                   # It was a reply, increment counter and update message_id
+                   token.reply_count += 1
+                   token.message_id = first_message_id
+               else:
+                   # New message thread started
+                   token.message_id = first_message_id
+                   token.reply_count = 1
+               
+               # Check if token already has active tracking
+               existing_tracker_result = await session.execute(
+                   select(SignalResult).where(
+                       SignalResult.token_address == signal.get('address'),
+                       SignalResult.tracking_status == 'TRACKING'
                    )
-                   existing_tracker = existing_tracker_result.scalar_one_or_none()
-                   
-                   # Create tracker if none exists and chart is available
-                   if not existing_tracker and before_file_id:
-                       new_tracker = SignalResult(
-                           alert_id=None,
-                           token_address=signal.get('address'),
-                           token_symbol=signal.get('token'),
-                           signal_price=signal.get('price', 0),
-                           before_chart_file_id=before_file_id,
-                           tracking_status='TRACKING'
-                       )
-                       session.add(new_tracker)
-                       logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
+               )
+               existing_tracker = existing_tracker_result.scalar_one_or_none()
+               
+               # Create tracker if none exists and chart is available
+               if not existing_tracker and before_file_id:
+                   new_tracker = SignalResult(
+                       alert_id=None,
+                       token_address=signal.get('address'),
+                       token_symbol=signal.get('token'),
+                       signal_price=signal.get('price', 0),
+                       before_chart_file_id=before_file_id,
+                       tracking_status='TRACKING'
+                   )
+                   session.add(new_tracker)
+                   logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
                    
            logger.info(f"Update sent to {sent_count} users. {'(Reply)' if reply_to_message_id else '(New thread)'}")
 
