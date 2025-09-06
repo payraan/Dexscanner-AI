@@ -66,10 +66,11 @@ class ResultTracker:
                         logger.info(f"New peak for {signal.token_symbol}: {profit:.2f}% at ${current_price:.8f}")
 
                     # --- Check for end conditions ---
+                    is_successful = signal.peak_profit_percentage >= PROFIT_THRESHOLD
                     is_expired = datetime.utcnow() > signal.created_at + timedelta(days=TRACKING_EXPIRATION_DAYS)
                     is_rugged = profit < RUG_PULL_THRESHOLD
                     
-                    if is_expired or is_rugged:
+                    if is_successful or is_expired or is_rugged:
                         await self._close_tracking(session, signal, token.pool_id, is_rugged)
 
                 except Exception as e:

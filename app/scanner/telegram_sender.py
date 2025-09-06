@@ -164,15 +164,16 @@ class TelegramSender:
                    logger.error(f"Failed to send message to user {user.id}: {e}")
 
            # Update token's message tracking
-           if first_message_id:
-               # Update token with message info
-               if reply_to_message_id:
-                   # It was a reply, increment counter
-                   token.reply_count += 1
-               else:
-                   # New message thread started
-                   token.message_id = first_message_id
-                   token.reply_count = 1
+               if first_message_id:
+                   # Update token with message info
+                   if reply_to_message_id:
+                       # It was a reply, increment counter and update message_id
+                       token.reply_count += 1
+                       token.message_id = first_message_id
+                   else:
+                       # New message thread started
+                       token.message_id = first_message_id
+                       token.reply_count = 1
                    
                    # Check if token already has active tracking
                    
