@@ -63,11 +63,7 @@ class TokenScanner:
                 logger.warning(f"Token {token_data['symbol']} not found in DB, skipping.")
                 continue
 
-            # EAGERLY LOAD ALL required attributes immediately into local variables
             last_price = token.last_scan_price
-            current_state = token.state
-            msg_id = token.message_id
-            rep_count = token.reply_count
 
             # Skip tokens in cooldown immediately after loading state
             if current_state in ['SIGNALED', 'COOLDOWN']:
@@ -110,7 +106,7 @@ class TokenScanner:
                 analysis_data, df = await analysis_engine.analyze_token(token_data, session)
                 if analysis_data and df is not None:
                     # Pass the safe local variables, not the lazy-loaded attributes
-                    updates_to_send.append((analysis_data, df, token, last_price, current_state, msg_id, rep_count))
+                    updates_to_send.append((analysis_data, df, token, last_price))
                     token.last_scan_price = current_price
                     logger.info(f"📤 Queued update for {token_data.get('symbol', 'Unknown')}")
 
@@ -120,7 +116,7 @@ class TokenScanner:
             for update_args in updates_to_send:
                 try:
                     await telegram_sender.send_signal(*update_args, session=session)
-                    analysis_data, _, token, _, _, _, _ = update_args
+                    analysis_data, df, token, last_price = update_args
                     await token_state_service.record_signal_sent(
                         analysis_data['address'],
                         analysis_data['price'],

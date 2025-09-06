@@ -17,7 +17,7 @@ class TelegramSender:
    def __init__(self):
        self.bot = Bot(token=settings.BOT_TOKEN)
 
-   def _build_analytical_caption(self, signal: Dict, last_scan_price: Optional[float], state: str) -> str:
+   def _build_analytical_caption(self, signal: Dict, last_scan_price: Optional[float], token_state: str) -> str:
        """
        Build caption for analytical updates (not signals anymore)
        """
@@ -38,7 +38,7 @@ class TelegramSender:
        # Determine update type
        if not last_scan_price:
            update_type = "🆕 اسکن جدید"
-       elif state == 'TRENDING':
+       elif token_state == 'TRENDING':
            update_type = "📈 آپدیت روند"
        else:
            update_type = "🔄 آپدیت وضعیت"
@@ -74,7 +74,7 @@ class TelegramSender:
        
        return caption
 
-   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], state: str, message_id: Optional[int], reply_count: int, session):
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], session):
     """Send analytical update (renamed from signal for compatibility)"""
     try:
         result = await session.execute(select(User).where(User.is_subscribed == True))
@@ -85,7 +85,7 @@ class TelegramSender:
             return
 
         # Build caption using new analytical format
-        caption = self._build_analytical_caption(signal, last_scan_price, state)
+        caption = self._build_analytical_caption(signal, last_scan_price, token.state)
         
         # Add onchain analysis button
         keyboard = [[
@@ -99,8 +99,8 @@ class TelegramSender:
         
         # Determine if we should reply to existing message using safe local variables
         reply_to_message_id = None
-        if message_id and reply_count < 10:
-            reply_to_message_id = message_id
+        if token.message_id and token.reply_count < 10:
+            reply_to_message_id = token.message_id
             
         sent_count = 0
         first_message_id = None
