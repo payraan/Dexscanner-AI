@@ -106,7 +106,7 @@ class TokenScanner:
                    # Get analysis data
                    analysis_data, df = await analysis_engine.analyze_token(token_data, session)
                    if analysis_data and df is not None:
-                       updates_to_send.append((analysis_data, df, token))
+                       updates_to_send.append((analysis_data, df, token, token.last_scan_price, token.state))
                        token.last_scan_price = current_price
                        # Note: last_state_change is now only updated on actual state changes
                        logger.info(f"📤 Queued update for {token_data.get('symbol', 'Unknown')}")

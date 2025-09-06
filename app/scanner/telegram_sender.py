@@ -74,7 +74,7 @@ class TelegramSender:
        
        return caption
 
-   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, session):
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], state: str, session):
        """Send analytical update (renamed from signal for compatibility)"""
        try:
            result = await session.execute(select(User).where(User.is_subscribed == True))
@@ -85,7 +85,7 @@ class TelegramSender:
                return
 
            # Build caption using new analytical format
-           caption = self._build_analytical_caption(signal, token.last_scan_price, token.state)
+           caption = self._build_analytical_caption(signal, last_scan_price, state)
            
            # Add onchain analysis button
            keyboard = [[
