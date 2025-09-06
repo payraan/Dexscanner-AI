@@ -75,131 +75,131 @@ class TelegramSender:
        return caption
 
    async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], state: str, message_id: Optional[int], reply_count: int, session):
-       """Send analytical update (renamed from signal for compatibility)"""
-       try:
-           result = await session.execute(select(User).where(User.is_subscribed == True))
-           subscribed_users = result.scalars().all()
-           
-           if not subscribed_users:
-               logger.warning("No subscribed users found")
-               return
+    """Send analytical update (renamed from signal for compatibility)"""
+    try:
+        result = await session.execute(select(User).where(User.is_subscribed == True))
+        subscribed_users = result.scalars().all()
+        
+        if not subscribed_users:
+            logger.warning("No subscribed users found")
+            return
 
-           # Build caption using new analytical format
-           caption = self._build_analytical_caption(signal, last_scan_price, state)
-           
-           # Add onchain analysis button
-           keyboard = [[
-               InlineKeyboardButton(text="📊 تحلیل آنچین", callback_data=f"onchain_{signal.get('address')}"),
-               InlineKeyboardButton(text="🧠 تحلیل AI", callback_data=f"ai_analyze_{signal.get('address')}")
-           ]]
-           reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        # Build caption using new analytical format
+        caption = self._build_analytical_caption(signal, last_scan_price, state)
+        
+        # Add onchain analysis button
+        keyboard = [[
+            InlineKeyboardButton(text="📊 تحلیل آنچین", callback_data=f"onchain_{signal.get('address')}"),
+            InlineKeyboardButton(text="🧠 تحلیل AI", callback_data=f"ai_analyze_{signal.get('address')}")
+        ]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-           # Generate chart
-           chart_bytes = chart_generator.create_signal_chart(df, signal)
-           
-           # Determine if we should reply to existing message using safe local variables
-           reply_to_message_id = None
-           if message_id and reply_count < 10:
-               reply_to_message_id = message_id
-               
-           sent_count = 0
-           first_message_id = None
-           before_file_id = None
-           
-           for user in subscribed_users:
-               try:
-                   if chart_bytes:
-                       photo = BufferedInputFile(chart_bytes, filename=f"{signal.get('token', 'chart')}.png")
-                       
-                       # Send with or without reply
-                       if reply_to_message_id:
-                           try:
-                               sent_message = await self.bot.send_photo(
-                                   chat_id=user.id,
-                                   photo=photo,
-                                   caption=f"↳ {caption}",  # Add arrow for replies
-                                   parse_mode='Markdown',
-                                   reply_to_message_id=reply_to_message_id,
-                                   reply_markup=reply_markup
-                               )
-                           except Exception as e:
-                               # If reply fails, send as new message
-                               logger.warning(f"Reply failed for user {user.id}, sending as new message")
-                               sent_message = await self.bot.send_photo(
-                                   chat_id=user.id,
-                                   photo=photo,
-                                   caption=caption,
-                                   parse_mode='Markdown',
-                                   reply_markup=reply_markup
-                               )
-                               reply_to_message_id = None  # Reset for next users
-                       else:
-                           sent_message = await self.bot.send_photo(
-                               chat_id=user.id,
-                               photo=photo,
-                               caption=caption,
-                               parse_mode='Markdown',
-                               reply_markup=reply_markup
-                           )
-                       
-                       # Store first message info
-                       if sent_count == 0:
-                           first_message_id = sent_message.message_id
-                           if sent_message.photo:
-                               before_file_id = sent_message.photo[-1].file_id
-                   else:
-                       # Fallback to text message if chart fails
-                       sent_message = await self.bot.send_message(
-                           chat_id=user.id,
-                           text=caption,
-                           parse_mode='Markdown',
-                           reply_markup=reply_markup,
-                           reply_to_message_id=reply_to_message_id if reply_to_message_id else None
-                       )
-                       if sent_count == 0:
-                           first_message_id = sent_message.message_id
-                   
-                   sent_count += 1
-               except Exception as e:
-                   logger.error(f"Failed to send message to user {user.id}: {e}")
+        # Generate chart
+        chart_bytes = chart_generator.create_signal_chart(df, signal)
+        
+        # Determine if we should reply to existing message using safe local variables
+        reply_to_message_id = None
+        if message_id and reply_count < 10:
+            reply_to_message_id = message_id
+            
+        sent_count = 0
+        first_message_id = None
+        before_file_id = None
+        
+        for user in subscribed_users:
+            try:
+                if chart_bytes:
+                    photo = BufferedInputFile(chart_bytes, filename=f"{signal.get('token', 'chart')}.png")
+                    
+                    # Send with or without reply
+                    if reply_to_message_id:
+                        try:
+                            sent_message = await self.bot.send_photo(
+                                chat_id=user.id,
+                                photo=photo,
+                                caption=f"↳ {caption}",  # Add arrow for replies
+                                parse_mode='Markdown',
+                                reply_to_message_id=reply_to_message_id,
+                                reply_markup=reply_markup
+                            )
+                        except Exception as e:
+                            # If reply fails, send as new message
+                            logger.warning(f"Reply failed for user {user.id}, sending as new message")
+                            sent_message = await self.bot.send_photo(
+                                chat_id=user.id,
+                                photo=photo,
+                                caption=caption,
+                                parse_mode='Markdown',
+                                reply_markup=reply_markup
+                            )
+                            reply_to_message_id = None  # Reset for next users
+                    else:
+                        sent_message = await self.bot.send_photo(
+                            chat_id=user.id,
+                            photo=photo,
+                            caption=caption,
+                            parse_mode='Markdown',
+                            reply_markup=reply_markup
+                        )
+                    
+                    # Store first message info
+                    if sent_count == 0:
+                        first_message_id = sent_message.message_id
+                        if sent_message.photo:
+                            before_file_id = sent_message.photo[-1].file_id
+                else:
+                    # Fallback to text message if chart fails
+                    sent_message = await self.bot.send_message(
+                        chat_id=user.id,
+                        text=caption,
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup,
+                        reply_to_message_id=reply_to_message_id if reply_to_message_id else None
+                    )
+                    if sent_count == 0:
+                        first_message_id = sent_message.message_id
+                
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user.id}: {e}")
 
-           # Update token's message tracking
-           if first_message_id:
-               # Update token with message info
-               if reply_to_message_id:
-                   # It was a reply, increment counter and update message_id
-                   token.reply_count += 1
-                   token.message_id = first_message_id
-               else:
-                   # New message thread started
-                   token.message_id = first_message_id
-                   token.reply_count = 1
-               
-               # Check if token already has active tracking
-               existing_tracker_result = await session.execute(
-                   select(SignalResult).where(
-                       SignalResult.token_address == signal.get('address'),
-                       SignalResult.tracking_status == 'TRACKING'
-                   )
-               )
-               existing_tracker = existing_tracker_result.scalar_one_or_none()
-               
-               # Create tracker if none exists and chart is available
-               if not existing_tracker and before_file_id:
-                   new_tracker = SignalResult(
-                       alert_id=None,
-                       token_address=signal.get('address'),
-                       token_symbol=signal.get('token'),
-                       signal_price=signal.get('price', 0),
-                       before_chart_file_id=before_file_id,
-                       tracking_status='TRACKING'
-                   )
-                   session.add(new_tracker)
-                   logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
-                   
-           logger.info(f"Update sent to {sent_count} users. {'(Reply)' if reply_to_message_id else '(New thread)'}")
+        # Update token's message tracking
+        if first_message_id:
+            # Update token with message info
+            if reply_to_message_id:
+                # It was a reply, increment counter and update message_id
+                token.reply_count += 1
+                token.message_id = first_message_id
+            else:
+                # New message thread started
+                token.message_id = first_message_id
+                token.reply_count = 1
+            
+            # Check if token already has active tracking
+            existing_tracker_result = await session.execute(
+                select(SignalResult).where(
+                    SignalResult.token_address == signal.get('address'),
+                    SignalResult.tracking_status == 'TRACKING'
+                )
+            )
+            existing_tracker = existing_tracker_result.scalar_one_or_none()
+            
+            # Create tracker if none exists and chart is available
+            if not existing_tracker and before_file_id:
+                new_tracker = SignalResult(
+                    alert_id=None,
+                    token_address=signal.get('address'),
+                    token_symbol=signal.get('token'),
+                    signal_price=signal.get('price', 0),
+                    before_chart_file_id=before_file_id,
+                    tracking_status='TRACKING'
+                )
+                session.add(new_tracker)
+                logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
+                
+        logger.info(f"Update sent to {sent_count} users. {'(Reply)' if reply_to_message_id else '(New thread)'}")
 
-       except Exception as e:
-           logger.error(f"Critical error in send_signal: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Critical error in send_signal: {e}", exc_info=True)
 
 telegram_sender = TelegramSender()
