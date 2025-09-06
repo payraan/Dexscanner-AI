@@ -116,15 +116,18 @@ class ResultTracker:
             if after_chart_bytes and signal.before_chart_file_id:
                 # Download before chart
                 before_chart_response = await self.bot.get_file(signal.before_chart_file_id)
-                before_chart_bytes = await self.bot.download_file(before_chart_response.file_path)
-            
+                before_chart_bytes_stream = await self.bot.download_file(before_chart_response.file_path)
+                
+                # Read the content only ONCE
+                before_chart_content = before_chart_bytes_stream.read()
+
                 # Create composite images for different platforms
                 composites = {}
                 templates = ['instagram_post', 'instagram_story', 'social_wide']
             
                 for template_type in templates:
                     composite_bytes = template_composer.create_composite(
-                        before_chart_bytes.read(),
+                        before_chart_content,  # <--- از محتوای ذخیره شده استفاده کن
                         after_chart_bytes,
                         signal.token_symbol,
                         signal.peak_profit_percentage,
