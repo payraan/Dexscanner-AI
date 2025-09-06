@@ -64,6 +64,7 @@ class TokenScanner:
                 continue
 
             last_price = token.last_scan_price
+            token_state = token.state
 
             # Skip tokens in cooldown immediately after loading state
             if token.state in ['SIGNALED', 'COOLDOWN']:
@@ -106,7 +107,7 @@ class TokenScanner:
                 analysis_data, df = await analysis_engine.analyze_token(token_data, session)
                 if analysis_data and df is not None:
                     # Pass the safe local variables, not the lazy-loaded attributes
-                    updates_to_send.append((analysis_data, df, token, last_price))
+                    updates_to_send.append((analysis_data, df, token, last_price, token_state))
                     token.last_scan_price = current_price
                     logger.info(f"📤 Queued update for {token_data.get('symbol', 'Unknown')}")
 
