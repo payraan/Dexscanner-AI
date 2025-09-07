@@ -63,6 +63,11 @@ class TokenScanner:
                 logger.warning(f"Token {token_data['symbol']} not found in DB, skipping.")
                 continue
 
+            # Skip rugged or suspicious tokens
+            if token.health_status in ['rugged', 'suspicious']:
+                logger.warning(f"⛔ Skipping {token.health_status} token: {token.symbol}")
+                continue
+
             last_price = token.last_scan_price
             token_state = token.state
 

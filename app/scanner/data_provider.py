@@ -169,7 +169,7 @@ class DataProvider:
         if data:
             attributes = data.get('data', {}).get('attributes', {})
             if attributes:
-                await redis_client.set(cache_key, attributes, ttl=86400)
+                await redis_client.set(cache_key, attributes, ttl=60)
             return attributes
         return None
 
