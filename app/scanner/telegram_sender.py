@@ -74,7 +74,7 @@ class TelegramSender:
        
        return caption
 
-   async def send_signal(self, signal: Dict, df: pd.DataFrame, token: Token, last_scan_price: Optional[float], token_state: str, session):
+   async def send_signal(self, signal: Dict, df: pd.DataFrame, token_data: Dict, last_scan_price: Optional[float], token_state: str, session):
     """Send analytical update (renamed from signal for compatibility)"""
     try:
         result = await session.execute(select(User).where(User.is_subscribed == True))
@@ -99,8 +99,8 @@ class TelegramSender:
         
         # Determine if we should reply to existing message using safe local variables
         reply_to_message_id = None
-        if token.message_id and token.reply_count < 10:
-            reply_to_message_id = token.message_id
+        if token_data['message_id'] and token_data['reply_count'] < 10:
+            reply_to_message_id = token_data['message_id']
             
         sent_count = 0
         first_message_id = None
@@ -166,14 +166,21 @@ class TelegramSender:
         # Update token's message tracking
         if first_message_id:
             # Update token with message info
-            if reply_to_message_id:
-                # It was a reply, increment counter and update message_id
-                token.reply_count += 1
-                token.message_id = first_message_id
-            else:
-                # New message thread started
-                token.message_id = first_message_id
-                token.reply_count = 1
+            # Get actual token from database to update it
+            token_result = await session.execute(
+                select(Token).where(Token.address == token_data['address'])
+            )
+            token = token_result.scalar_one_or_none()
+            
+            if token:
+                if reply_to_message_id:
+                    # It was a reply, increment counter and update message_id
+                    token.reply_count += 1
+                    token.message_id = first_message_id
+                else:
+                    # New message thread started
+                    token.message_id = first_message_id
+                    token.reply_count = 1
             
             # Check if token already has active tracking
             existing_tracker_result = await session.execute(

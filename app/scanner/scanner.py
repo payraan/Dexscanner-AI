@@ -103,11 +103,18 @@ class TokenScanner:
                         token.last_state_change = datetime.utcnow()
 
             if should_send_update:
+                # Extract token attributes BEFORE leaving session to avoid lazy loading
+                token_data_safe = {
+                    'message_id': token.message_id,
+                    'reply_count': token.reply_count,
+                    'address': token.address
+                }
+                
                 # Get analysis data
                 analysis_data, df = await analysis_engine.analyze_token(token_data, session)
                 if analysis_data and df is not None:
-                    # Pass the safe local variables, not the lazy-loaded attributes
-                    updates_to_send.append((analysis_data, df, token, last_price, token_state))
+                    # Pass the safe dictionary instead of ORM object
+                    updates_to_send.append((analysis_data, df, token_data_safe, last_price, token_state))
                     token.last_scan_price = current_price
                     logger.info(f"📤 Queued update for {token_data.get('symbol', 'Unknown')}")
 
@@ -116,8 +123,8 @@ class TokenScanner:
             logger.info(f"📨 Sending {len(updates_to_send)} updates in batches...")
             for update_args in updates_to_send:
                 try:
-                    await telegram_sender.send_signal(*update_args, session=session)
-                    analysis_data, df, token, last_price = update_args
+                    analysis_data, df, token_data_safe, last_price, token_state = update_args
+                    await telegram_sender.send_signal(analysis_data, df, token_data_safe, last_price, token_state, session=session)
                     await token_state_service.record_signal_sent(
                         analysis_data['address'],
                         analysis_data['price'],
