@@ -189,7 +189,7 @@ class TelegramSender:
                     SignalResult.tracking_status == 'TRACKING'
                 )
             )
-            existing_tracker = existing_tracker_result.scalar_one_or_none()
+            existing_tracker = existing_tracker_result.first()
             
             # Create tracker if none exists and chart is available
             if not existing_tracker and before_file_id:
