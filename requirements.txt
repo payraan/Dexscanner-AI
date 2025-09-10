@@ -24,7 +24,7 @@ kiwisolver==1.4.9
 magic-filter==1.0.12
 matplotlib==3.10.5
 multidict==6.6.4
-numpy==2.3.2
+numpy==2.2.6
 packaging==25.0
 pandas==2.3.2
 pandas_ta==0.4.67b0
