@@ -1,24 +1,27 @@
 import asyncio
 import logging
 from typing import List, Dict
+from datetime import datetime, timedelta
 
-# --- NEW: Import the EventEngine and the Token model ---
-from app.database.models import Token, Blacklist
-# --- END NEW ---
+# Database and models
+from app.database.session import get_db
+from app.database.models import Token, Blacklist, TokenState
 
+# Services and core
+from app.core.config import settings
 from app.services.cooldown_service import token_state_service
+from app.services.token_service import token_service
+from app.services.bitquery_service import bitquery_service
+
+# Scanner components
 from app.scanner.data_provider import data_provider
 from app.scanner.analysis import analysis_engine
-from app.core.config import settings
 from app.scanner.telegram_sender import telegram_sender
-from app.services.token_service import token_service
 from app.scanner.token_health import token_health_checker
-from app.services.bitquery_service import bitquery_service
-from app.database.session import get_db
+
+# SQLAlchemy
 from sqlalchemy import select
 from sqlalchemy.orm import undefer
-
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,10 @@ class TokenScanner:
             if token.health_status in ['rugged', 'suspicious']:
                 logger.warning(f"⛔ Skipping {token.health_status} token: {token.symbol}")
                 continue
+
+            # Skip tokens in SUCCESS_LOCKED state
+            if token.state == TokenState.SUCCESS_LOCKED:
+                continue            
 
             last_price = token.last_scan_price
             token_state = token.state

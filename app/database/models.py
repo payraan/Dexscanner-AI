@@ -5,6 +5,18 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()
 
+import enum
+from sqlalchemy import Enum as SQLEnum
+
+class TokenState(enum.Enum):
+    WATCHING = "WATCHING"
+    SIGNALED = "SIGNALED" 
+    COOLDOWN = "COOLDOWN"
+    SUCCESS_LOCKED = "SUCCESS_LOCKED"  # وضعیت جدید
+    INVALIDATED = "INVALIDATED"
+    RANGING = "RANGING"
+    TRENDING = "TRENDING"
+
 class User(Base):
    __tablename__ = 'users'
    
@@ -23,7 +35,7 @@ class Token(Base):
    launch_date = Column(DateTime, nullable=False) 
      
    # --- فیلدهای جدید برای چرخه حیات و مدیریت وضعیت ---
-   state = Column(String, default='WATCHING', index=True) # مقادیر: WATCHING, SIGNALED, COOLDOWN, INVALIDATED
+   state = Column(SQLEnum(TokenState), nullable=False, default=TokenState.WATCHING, index=True)
    last_signal_price = Column(Float, nullable=True)
    last_state_change = Column(DateTime, default=datetime.utcnow)
    last_scan_price = Column(Float, nullable=True)

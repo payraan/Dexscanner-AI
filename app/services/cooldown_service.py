@@ -1,5 +1,5 @@
 from app.database.session import get_db
-from app.database.models import Token
+from app.database.models import Token, TokenState
 from sqlalchemy import select, update
 from datetime import datetime, timedelta, timezone
 import logging
@@ -8,9 +8,10 @@ from app.scanner.timeframe_selector import get_dynamic_timeframe # Import the he
 logger = logging.getLogger(__name__)
 
 # Define token states
-STATE_WATCHING = "WATCHING"
-STATE_SIGNALED = "SIGNALED"
-STATE_COOLDOWN = "COOLDOWN"
+STATE_WATCHING = TokenState.WATCHING
+STATE_SIGNALED = TokenState.SIGNALED
+STATE_COOLDOWN = TokenState.COOLDOWN
+STATE_SUCCESS_LOCKED = TokenState.SUCCESS_LOCKED
 
 class TokenStateService:
     def _get_dynamic_cooldown(self, launch_date: datetime) -> timedelta:
@@ -99,5 +100,19 @@ class TokenStateService:
             await session.commit()
             logger.info(f"🔄 Reset state to WATCHING for {len(tokens_to_reset_ids)} tokens.")
 
+    async def lock_successful_token(self, token_address: str, session):
+        """
+        Locks a token in SUCCESS_LOCKED state when it reaches profit threshold.
+        """
+        stmt = (
+            update(Token)
+            .where(Token.address == token_address)
+            .values(
+                state=STATE_SUCCESS_LOCKED,
+                last_state_change=datetime.utcnow()
+            )
+        )
+        await session.execute(stmt)
+        logger.info(f"🔒 Token locked in SUCCESS state: {token_address}")  
 
 token_state_service = TokenStateService()

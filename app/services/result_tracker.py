@@ -1,26 +1,27 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy import select
-from app.database.session import get_db
-from app.database.models import SignalResult, Token
-from app.scanner.data_provider import data_provider
-from app.scanner.chart_generator import chart_generator
-from app.core.config import settings
+from sqlalchemy import select, update
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+
+# --- ۱. تمام import های لازم به صورت صحیح و بدون تکرار اینجا قرار دارد ---
+from app.core.config import settings
+from app.database.session import get_db
+from app.database.models import SignalResult, Token, TokenState
+from app.scanner.data_provider import data_provider
+from app.scanner.chart_generator import chart_generator
+from app.services.cooldown_service import token_state_service, STATE_COOLDOWN
 from app.services.template_composer import template_composer
 from app.scanner.token_health import token_health_checker
 
 logger = logging.getLogger(__name__)
 
-# --- Constants for better management ---
-PROFIT_THRESHOLD = 20.0  # 20% success threshold
-RUG_PULL_THRESHOLD = -80.0 # -80% drop
+# --- ثابت‌ها ---
+PROFIT_THRESHOLD = 20.0
+RUG_PULL_THRESHOLD = -80.0
 TRACKING_EXPIRATION_DAYS = 7
 CLEANUP_EXPIRATION_DAYS = 30
-
-# --- NEW: Define tracking statuses ---
 STATUS_TRACKING = 'TRACKING'
 STATUS_SUCCESS = 'SUCCESS'
 STATUS_FAILED = 'FAILED'
@@ -31,90 +32,104 @@ class ResultTracker:
         self.bot = Bot(token=settings.BOT_TOKEN)
 
     async def track_signals(self):
-        """Main job to track active signals' performance."""
         logger.info("📈 Starting result tracking cycle...")
         async for session in get_db():
-            # JOIN مستقیم با Token برای دریافت تمام اطلاعات در یک کوئری
-            result = await session.execute(
-                select(SignalResult, Token)
-                .join(Token, Token.address == SignalResult.token_address)
-                .where(SignalResult.tracking_status == STATUS_TRACKING)
-            )
-            tracking_results = result.all()
-
-            for signal, token in tracking_results:
-                try:
-                    # دیگر نیازی به کوئری جداگانه برای توکن نیست
-                    if not token or not token.pool_id:
-                        logger.warning(f"Token or pool_id not found for address {signal.token_address}")
-                        continue
-
-                    # Fetch the latest price data
-                    pool_details = await data_provider.fetch_pool_details(token.pool_id)
-                    if not pool_details or 'base_token_price_usd' not in pool_details:
-                        continue
-                    
-                    current_price = float(pool_details['base_token_price_usd'])
-                    if current_price == 0:
-                        continue
-
-                    profit = ((current_price - signal.signal_price) / signal.signal_price) * 100
-
-                    # --- CORE LOGIC: Continuously update the peak performance ---
-                    if current_price > (signal.peak_price or 0):
-                        signal.peak_price = current_price
-                        signal.peak_profit_percentage = profit
-                        logger.info(f"New peak for {signal.token_symbol}: {profit:.2f}% at ${current_price:.8f}")
-
-                    # --- Check for end conditions ---
-                    is_successful = signal.peak_profit_percentage >= PROFIT_THRESHOLD
-                    is_expired = datetime.utcnow() > signal.created_at + timedelta(days=TRACKING_EXPIRATION_DAYS)
-                    is_rugged = profit < RUG_PULL_THRESHOLD
-                    
-                    if is_successful or is_expired or is_rugged:
-                        await self._close_tracking(session, signal, token.pool_id, is_rugged)
-
-                except Exception as e:
-                    logger.error(f"Error tracking signal {signal.id}: {e}", exc_info=True)
-            
+            await self._process_tracking_signals(session)
+            await self._process_locked_signals(session)
             await session.commit()
+            logger.info("✅ Result tracking cycle finished.")
 
-    async def _close_tracking(self, session, signal, pool_id, is_rugged):
-        """Closes the tracking for a signal, determines final status, and captures chart if successful."""
+    async def _process_tracking_signals(self, session):
+        # این تابع سیگنال‌های جدید را برای رسیدن به موفقیت اولیه بررسی می‌کند
+        result = await session.execute(
+            select(SignalResult, Token)
+            .join(Token, Token.address == SignalResult.token_address)
+            .where(SignalResult.tracking_status == STATUS_TRACKING)
+        )
+        tracking_signals = result.all()
+        for signal, token in tracking_signals:
+            try:
+                current_price = await self._get_current_price(token.pool_id)
+                if current_price is None: continue
+                profit = ((current_price - signal.signal_price) / signal.signal_price) * 100
+                if current_price > (signal.peak_price or 0):
+                    signal.peak_price = current_price
+                    signal.peak_profit_percentage = profit
+                
+                is_successful = (signal.peak_profit_percentage or 0) >= PROFIT_THRESHOLD
+                is_expired = datetime.utcnow() > signal.created_at + timedelta(days=TRACKING_EXPIRATION_DAYS)
+                is_rugged = profit < RUG_PULL_THRESHOLD
+
+                if is_successful:
+                    logger.info(f"✅ SUCCESS: {signal.token_symbol} reached {profit:.2f}%. Locking token.")
+                    await token_state_service.lock_successful_token(token.address, session)
+                    await self._close_tracking(session, signal, token.pool_id, status=STATUS_SUCCESS)
+                elif is_expired or is_rugged:
+                    status = STATUS_EXPIRED if is_expired else STATUS_FAILED
+                    logger.warning(f"❌ FAILED: {signal.token_symbol} closing with status {status}.")
+                    await self._close_tracking(session, signal, token.pool_id, status=status)
+            except Exception as e:
+                logger.error(f"Error in _process_tracking_signals for signal {signal.id}: {e}", exc_info=True)
+
+    async def _process_locked_signals(self, session):
+        # این تابع فقط سیگنال‌های موفق را برای آپدیت کردن قله سود بررسی می‌کند
+        result = await session.execute(
+            select(SignalResult, Token)
+            .join(Token, Token.address == SignalResult.token_address)
+            .where(
+                SignalResult.tracking_status == STATUS_SUCCESS,
+                Token.state == TokenState.SUCCESS_LOCKED
+            )
+        )
+        locked_signals = result.all()
+        for signal, token in locked_signals:
+            try:
+                current_price = await self._get_current_price(token.pool_id)
+                if current_price is None: continue
+
+                if current_price > (signal.peak_price or 0):
+                    old_peak_profit = signal.peak_profit_percentage
+                    profit = ((current_price - signal.signal_price) / signal.signal_price) * 100
+                    signal.peak_price = current_price
+                    signal.peak_profit_percentage = profit
+                    logger.info(f"🚀 PEAK UPDATE for {signal.token_symbol}: {old_peak_profit:.2f}% -> {profit:.2f}%")
+                    # اگر بخواهید با هر قله جدید چارت هم آپدیت شود، کد آن را اینجا فراخوانی کنید
+                    # await self._capture_after_chart(signal, token.pool_id)
+
+                peak_price = signal.peak_price or current_price
+                if current_price < peak_price * 0.6: # 40% drop from peak
+                    logger.info(f"🔓 UNLOCKING {signal.token_symbol} due to significant price drop.")
+                    stmt = (
+                        update(Token)
+                        .where(Token.address == token.address)
+                        .values(state=STATE_COOLDOWN, last_state_change=datetime.utcnow())
+                    )
+                    await session.execute(stmt)
+            except Exception as e:
+                logger.error(f"Error in _process_locked_signals for signal {signal.id}: {e}", exc_info=True)
+
+    # --- ۲. نسخه صحیح و ساده شده تابع _close_tracking ---
+    async def _close_tracking(self, session, signal: SignalResult, pool_id: str, status: str):
         signal.closed_at = datetime.utcnow()
-
-        if is_rugged:
-            signal.is_rugged = True
-            signal.tracking_status = STATUS_FAILED
-            logger.warning(f"🚨 Rug pull detected for {signal.token_symbol}! Tracking closed.")
-            return
-
-        # بررسی سلامت نهایی توکن
-        df_for_health = await data_provider.fetch_ohlcv(pool_id, limit=50)
-        if df_for_health is not None and not df_for_health.empty:
-            # دریافت اطلاعات حجم از pool_details
-            pool_details = await data_provider.fetch_pool_details(pool_id)
-            token_info = {
-                'symbol': signal.token_symbol,
-                'volume_24h': float(pool_details.get('volume_usd', {}).get('h24', 0)) if pool_details else 0
-            }
-            final_health = await token_health_checker.check_token_health(df_for_health, token_info)
-        else:
-            final_health = 'unknown'
-
-        # Determine final status based on peak performance AND health
-        if signal.peak_profit_percentage >= PROFIT_THRESHOLD and final_health == 'active':
-            signal.tracking_status = STATUS_SUCCESS
-            logger.info(f"✅ Successful signal for {signal.token_symbol} with {signal.peak_profit_percentage:.2f}% profit")
+        signal.tracking_status = status
+        
+        if status == STATUS_SUCCESS:
+            logger.info(f"✅ Capturing final chart for successful signal: {signal.token_symbol}")
             await self._capture_after_chart(signal, pool_id)
-        else:
-            signal.tracking_status = STATUS_FAILED
-            if final_health != 'active':
-                signal.is_rugged = True
-                logger.info(f"❌ Signal failed due to unhealthy state: {final_health}")
-            else:
-                logger.info(f"❌ Signal failed - Peak profit: {signal.peak_profit_percentage:.2f}%")
-            
+        
+        session.add(signal)
+        logger.info(f"Tracking closed for {signal.token_symbol} with status: {status}")
+
+    async def _get_current_price(self, pool_id: str):
+        try:
+            pool_details = await data_provider.fetch_pool_details(pool_id)
+            if pool_details and 'base_token_price_usd' in pool_details:
+                price = float(pool_details['base_token_price_usd'])
+                return price if price > 0 else None
+        except Exception as e:
+            logger.error(f"Could not fetch price for pool {pool_id}: {e}")
+        return None
+
     async def _capture_after_chart(self, signal, pool_id):
         """Generates composite before/after images and saves file_ids."""
         try:
