@@ -3,6 +3,7 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import pandas as pd
 import io
+import numpy as np
 from typing import Dict, Optional, List
 
 # سطوح فیبوناچی اصلاحی که میخواهیم نمایش دهیم
@@ -61,11 +62,36 @@ class ChartGenerator:
             zone_height = zone['price'] * 0.015 # کمی ضخیم‌تر
             ax.axhspan(zone['price'] - zone_height / 2, zone['price'] + zone_height / 2, color=color, alpha=alpha)
 
+    def _remove_outlier_candles(self, df: pd.DataFrame) -> pd.DataFrame:
+        """یک تابع کمکی برای حذف کندل‌های پرت و نویزی بر اساس ارتفاع آنها."""
+        if df.empty or len(df) < 10:
+            return df
+        
+        df['candle_height'] = df['high'] - df['low']
+        # از quantile استفاده می‌کنیم که نسبت به داده‌های پرت مقاوم‌تر است
+        q1 = df['candle_height'].quantile(0.25)
+        q3 = df['candle_height'].quantile(0.75)
+        iqr = q3 - q1
+        # ضریب ۲.۵ کمی منعطف‌تر از ۱.۵ استاندارد است تا کندل‌های صرفاً بزرگ را حذف نکند
+        upper_bound = q3 + 2.5 * iqr
+
+        # فقط کندل‌هایی که ارتفاعشان در محدوده معقول است را نگه می‌داریم
+        cleaned_df = df[df['candle_height'] <= upper_bound].copy()
+        cleaned_df.drop(columns=['candle_height'], inplace=True)
+        
+        # اگر فیلتر باعث حذف تمام داده‌ها شد، همان داده‌های اصلی را برمی‌گردانیم
+        if cleaned_df.empty:
+            return df.drop(columns=['candle_height'])
+            
+        return cleaned_df   
+
     def create_signal_chart(self, df: pd.DataFrame, signal_data: Dict) -> Optional[bytes]:
         """نمودار کندل استیک را با تمام اندیکاتورها و مقیاس‌بندی صحیح ایجاد می‌کند."""
         if df.empty or len(df) < 10:
             return None
-
+        # --- این خط جدید را اینجا اضافه کن ---
+        df = self._remove_outlier_candles(df)
+        
         # نام توکن از signal_data گرفته می‌شود که همیشه وجود دارد
         token_symbol = signal_data.get('token', 'Unknown')
 
