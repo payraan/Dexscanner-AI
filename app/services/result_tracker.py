@@ -177,9 +177,8 @@ class ResultTracker:
                         )
                         composites[template_type] = sent_message.photo[-1].file_id
             
-                # Save the main composite as after_chart_file_id
-                if 'instagram_post' in composites:
-                    signal.after_chart_file_id = composites['instagram_post']
+                # Save the entire dictionary of file_ids to the new JSONB column
+                signal.composite_file_ids = composites
                 
                 logger.info(f"Generated composite templates for {signal.token_symbol} with timeframe {timeframe_str}")
 

@@ -245,18 +245,20 @@ class TelegramBot:
 
         for result in signal_results:
             try:
-                # فقط در صورتی که تصویر نهایی (مونتاژ شده) وجود دارد، آن را نمایش بده
-                if result.after_chart_file_id:
+                # فقط در صورتی که دیکشنری file_ids وجود دارد و کلید social_wide در آن است
+                if result.composite_file_ids and 'social_wide' in result.composite_file_ids:
+                    file_id_to_send = result.composite_file_ids['social_wide']
                     caption = (
                         f"📊 **توکن:** `${result.token_symbol}`\n"
                         f"🚀 **رشد:** `+{result.peak_profit_percentage:.2f}%`\n"
                         f"⏱️ **ثبت شده در:** `{result.closed_at.strftime('%Y-%m-%d')}`"
                     )
                     await message.answer_photo(
-                        photo=result.after_chart_file_id,
+                        photo=file_id_to_send, # <-- استفاده از file_id مشخص شده
                         caption=caption,
                         parse_mode='Markdown'
                     )
+
             except Exception as e:
                 logger.error(f"Error sending result for {result.id}: {e}")
 

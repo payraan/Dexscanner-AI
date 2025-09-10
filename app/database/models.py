@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, BigInteger, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
+from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()
 
@@ -112,7 +113,7 @@ class SignalResult(Base):
     initial_timeframe = Column(String, nullable=True)
 
     before_chart_file_id = Column(String, nullable=False)
-    after_chart_file_id = Column(String, nullable=True)
+    composite_file_ids = Column(JSONB, nullable=True)
 
     is_rugged = Column(Boolean, default=False)
 
