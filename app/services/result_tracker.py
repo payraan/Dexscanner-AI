@@ -10,6 +10,7 @@ from app.core.config import settings
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 from app.services.template_composer import template_composer
+from app.scanner.token_health import token_health_checker
 
 logger = logging.getLogger(__name__)
 
@@ -88,28 +89,61 @@ class ResultTracker:
             logger.warning(f"🚨 Rug pull detected for {signal.token_symbol}! Tracking closed.")
             return
 
-        # Determine final status based on peak performance
-        if signal.peak_profit_percentage >= PROFIT_THRESHOLD:
+        # بررسی سلامت نهایی توکن
+        df_for_health = await data_provider.fetch_ohlcv(pool_id, limit=50)
+        if df_for_health is not None and not df_for_health.empty:
+            # دریافت اطلاعات حجم از pool_details
+            pool_details = await data_provider.fetch_pool_details(pool_id)
+            token_info = {
+                'symbol': signal.token_symbol,
+                'volume_24h': float(pool_details.get('volume_usd', {}).get('h24', 0)) if pool_details else 0
+            }
+            final_health = await token_health_checker.check_token_health(df_for_health, token_info)
+        else:
+            final_health = 'unknown'
+
+        # Determine final status based on peak performance AND health
+        if signal.peak_profit_percentage >= PROFIT_THRESHOLD and final_health == 'active':
             signal.tracking_status = STATUS_SUCCESS
-            logger.info(f"✅ Successful signal captured for {signal.token_symbol} with peak profit of {signal.peak_profit_percentage:.2f}%")
-            # Generate and save the "After" chart for successful signals
+            logger.info(f"✅ Successful signal for {signal.token_symbol} with {signal.peak_profit_percentage:.2f}% profit")
             await self._capture_after_chart(signal, pool_id)
         else:
             signal.tracking_status = STATUS_FAILED
-            logger.info(f"❌ Signal for {signal.token_symbol} failed to meet profit threshold. Peak: {signal.peak_profit_percentage:.2f}%")
+            if final_health != 'active':
+                signal.is_rugged = True
+                logger.info(f"❌ Signal failed due to unhealthy state: {final_health}")
+            else:
+                logger.info(f"❌ Signal failed - Peak profit: {signal.peak_profit_percentage:.2f}%")
             
     async def _capture_after_chart(self, signal, pool_id):
         """Generates composite before/after images and saves file_ids."""
         try:
-            df = await data_provider.fetch_ohlcv(pool_id, limit=200)
+            # استخراج تایم‌فریم از سیگنال ذخیره شده
+            timeframe_str = signal.initial_timeframe or "1H"
+            
+            # تبدیل فرمت: '5M' -> timeframe='minute', aggregate='5'
+            import re
+            match = re.match(r'(\d+)([MHD])', timeframe_str)
+            if match:
+                aggregate = match.group(1)
+                unit = match.group(2)
+                timeframe_map = {'M': 'minute', 'H': 'hour', 'D': 'day'}
+                timeframe = timeframe_map.get(unit, 'hour')
+            else:
+                timeframe = 'hour'
+                aggregate = '1'
+            
+            # دریافت داده‌ها با تایم‌فریم صحیح
+            df = await data_provider.fetch_ohlcv(pool_id, timeframe=timeframe, aggregate=aggregate, limit=200)
             if df is None or df.empty:
+                logger.warning(f"No data available for {signal.token_symbol} in timeframe {timeframe_str}")
                 return
 
             signal_data_for_chart = {
                 'token': signal.token_symbol,
                 'price': signal.peak_price,
                 'address': signal.token_address,
-                'timeframe': '1H'
+                'timeframe': timeframe_str  # استفاده از تایم‌فریم اصلی
             }
             after_chart_bytes = chart_generator.create_signal_chart(df, signal_data_for_chart)
 
@@ -147,7 +181,7 @@ class ResultTracker:
                 if 'instagram_post' in composites:
                     signal.after_chart_file_id = composites['instagram_post']
                 
-                logger.info(f"Generated composite templates for {signal.token_symbol}")
+                logger.info(f"Generated composite templates for {signal.token_symbol} with timeframe {timeframe_str}")
 
         except Exception as e:
             logger.error(f"Failed to generate composite for {signal.token_symbol}: {e}", exc_info=True)

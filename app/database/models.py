@@ -108,6 +108,9 @@ class SignalResult(Base):
     closed_at = Column(DateTime, nullable=True) # زمان بسته شدن ردیابی
     # --- پایان فیلدهای بهبود یافته ---
 
+    # فیلد جدید برای ذخیره تایم‌فریم اولیه
+    initial_timeframe = Column(String, nullable=True)
+
     before_chart_file_id = Column(String, nullable=False)
     after_chart_file_id = Column(String, nullable=True)
 

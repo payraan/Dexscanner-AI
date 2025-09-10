@@ -199,7 +199,8 @@ class TelegramSender:
                     token_symbol=signal.get('token'),
                     signal_price=signal.get('price', 0),
                     before_chart_file_id=before_file_id,
-                    tracking_status='TRACKING'
+                    tracking_status='TRACKING',
+                    initial_timeframe=signal.get('timeframe')
                 )
                 session.add(new_tracker)
                 logger.info(f"✅ Tracking started for {signal.get('token')}. This is the 'Before' state.")
