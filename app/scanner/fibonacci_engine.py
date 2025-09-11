@@ -21,33 +21,49 @@ class FibonacciEngine:
 
     def _find_latest_swing_points(self, df: pd.DataFrame):
         """
-        آخرین موج حرکتی معتبر (آخرین سقف و کف مهم) را با استفاده از الگوریتم شناسایی می‌کند.
+        آخرین موج حرکتی معتبر را با در نظر گرفتن هر دو حالت صعودی و نزولی شناسایی می‌کند
         """
         if len(df) < 20:
             return None, None
 
-        # پیدا کردن نقاط اکسترمم نسبی (قلّه‌ها و دره‌ها)
+        # پیدا کردن نقاط اکسترمم نسبی
         swing_high_indices = argrelextrema(df['high'].values, np.greater_equal, order=5)[0]
         swing_low_indices = argrelextrema(df['low'].values, np.less_equal, order=5)[0]
 
         if swing_high_indices.size == 0 or swing_low_indices.size == 0:
             return None, None
 
-        # آخرین سقف و کف مهم را پیدا کن
+        # پیدا کردن آخرین high و low
         latest_high_idx = swing_high_indices[-1]
+        latest_low_idx = swing_low_indices[-1]
         
-        # پیدا کردن آخرین کف مهمی که قبل از آخرین سقف رخ داده است
-        relevant_low_indices = swing_low_indices[swing_low_indices < latest_high_idx]
-        if relevant_low_indices.size == 0:
-            return None, None # موج معتبری پیدا نشد
+        # سناریو 1: موج صعودی (low -> high)
+        if latest_low_idx < latest_high_idx:
+            # پیدا کردن معتبرترین low قبل از high
+            relevant_lows = swing_low_indices[swing_low_indices < latest_high_idx]
+            if relevant_lows.size > 0:
+                # انتخاب low با کمترین قیمت در بازه اخیر
+                best_low_idx = relevant_lows[-1]
+                for idx in relevant_lows[-3:]:  # بررسی 3 low آخر
+                    if df['low'].iloc[idx] < df['low'].iloc[best_low_idx]:
+                        best_low_idx = idx
+                
+                return df['high'].iloc[latest_high_idx], df['low'].iloc[best_low_idx]
         
-        latest_low_idx = relevant_low_indices[-1]
-
-        # FIX: استخراج درست swing points
-        swing_high_point = df['high'].iloc[latest_high_idx]
-        swing_low_point = df['low'].iloc[latest_low_idx]
-
-        return swing_high_point, swing_low_point
+        # سناریو 2: موج نزولی (high -> low) 
+        elif latest_high_idx < latest_low_idx:
+            # پیدا کردن معتبرترین high قبل از low
+            relevant_highs = swing_high_indices[swing_high_indices < latest_low_idx]
+            if relevant_highs.size > 0:
+                # انتخاب high با بیشترین قیمت در بازه اخیر
+                best_high_idx = relevant_highs[-1]
+                for idx in relevant_highs[-3:]:  # بررسی 3 high آخر
+                    if df['high'].iloc[idx] > df['high'].iloc[best_high_idx]:
+                        best_high_idx = idx
+                
+                return df['high'].iloc[best_high_idx], df['low'].iloc[latest_low_idx]
+        
+        return None, None
 
     async def get_or_create_state(self, session: AsyncSession, token_address: str, timeframe: str, df: pd.DataFrame) -> FibonacciState:
         """
