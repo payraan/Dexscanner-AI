@@ -87,9 +87,7 @@ class TelegramSender:
         # Build caption using new analytical format
         caption = self._build_analytical_caption(signal, last_scan_price, token_state)
         
-        # Add onchain analysis button
         keyboard = [[
-            InlineKeyboardButton(text="📊 تحلیل آنچین", callback_data=f"onchain_{signal.get('address')}"),
             InlineKeyboardButton(text="🧠 تحلیل AI", callback_data=f"ai_analyze_{signal.get('address')}")
         ]]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)

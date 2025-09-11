@@ -11,7 +11,6 @@ from app.database.models import Token, Blacklist, TokenState
 from app.core.config import settings
 from app.services.cooldown_service import token_state_service
 from app.services.token_service import token_service
-from app.services.bitquery_service import bitquery_service
 
 # Scanner components
 from app.scanner.data_provider import data_provider

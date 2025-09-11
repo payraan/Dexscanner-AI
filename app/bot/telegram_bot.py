@@ -4,11 +4,12 @@ from aiogram.filters import Command
 from aiogram.utils.media_group import MediaGroupBuilder
 from app.core.config import settings
 from app.services.ai_analyzer import ai_analyzer
+from app.services.redis_client import redis_client
+import time
 from app.bot.middlewares import SubscriptionMiddleware
 import asyncio
 import logging
 import io
-from app.services.bitquery_service import bitquery_service
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +46,6 @@ class TelegramBot:
         self.dp.message.register(self.support_handler, F.text == "📞 پشتیبانی")
         # Handler جدید برای دکمه AI
         self.dp.callback_query.register(self.ai_analysis_handler, F.data.startswith("ai_analyze_"))
-        self.dp.callback_query.register(self.onchain_analysis_handler, F.data.startswith("onchain_"))
         self.dp.message.register(self.activate_subscription_handler, Command("activatesub"))
 
     async def activate_subscription_handler(self, message: Message):
@@ -136,8 +136,42 @@ class TelegramBot:
             "/help - Show this help message"
         )
 
+    async def _is_ai_rate_limited(self, user_id: int) -> bool:
+        """Check if user exceeded AI analysis rate limit (10/hour)"""
+        if not redis_client.connected:
+            return False
+        
+        RATE_LIMIT_COUNT = 10
+        RATE_LIMIT_WINDOW = 3600
+        
+        key = f"rate_limit:ai:{user_id}"
+        current_time = time.time()
+        
+        try:
+            await redis_client.redis_client.zremrangebyscore(key, 0, current_time - RATE_LIMIT_WINDOW)
+            request_count = await redis_client.redis_client.zcard(key)
+            
+            if request_count >= RATE_LIMIT_COUNT:
+                return True
+                
+            await redis_client.redis_client.zadd(key, {str(current_time): current_time})
+            await redis_client.redis_client.expire(key, RATE_LIMIT_WINDOW)
+            return False
+        except Exception as e:
+            logger.error(f"Redis rate limit check failed: {e}")
+            return False
+
     async def ai_analysis_handler(self, callback: CallbackQuery):
         """Handle AI analysis button click"""
+        user_id = callback.from_user.id
+        
+        # Rate limiting check
+        if await self._is_ai_rate_limited(user_id):
+            await callback.answer(
+                "⚠️ شما به حداکثر تعداد تحلیل در ساعت رسیده‌اید. لطفاً بعداً تلاش کنید.",
+                show_alert=True
+            )
+            return
         await callback.answer("🧠 در حال تحلیل...")
     
         try:
@@ -165,57 +199,6 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"AI analysis error: {e}")
             await callback.message.reply("❌ خطا در تحلیل هوش مصنوعی.")
-
-    async def onchain_analysis_handler(self, callback: CallbackQuery):
-        """Handle OnChain analysis button click"""
-        await callback.answer("📊 در حال دریافت داده‌های آنچین...")
-        
-        try:
-            token_address = callback.data.replace("onchain_", "")
-            
-            # Import bitquery service
-            from app.services.bitquery_service import bitquery_service
-            
-            holder_stats = await bitquery_service.get_holder_stats(token_address)
-            liquidity_stats = await bitquery_service.get_liquidity_stats(token_address)
-            total_holders = await bitquery_service.get_total_holders(token_address)
-
-            if not holder_stats and not liquidity_stats:
-                await callback.message.reply("❌ داده‌های آنچین در حال حاضر در دسترس نیست.")
-                return
-
-            # ساخت متن پاسخ
-            text = "📊 **تحلیل آنچین**\n\n"
-
-            if holder_stats:
-                concentration = holder_stats.get('top_10_concentration', 'N/A')
-                text += f"💎 **توزیع هولدرها:**\n"
-                if total_holders is not None:
-                    try:
-                        total_holders_int = int(total_holders)
-                        text += f"• تعداد کل هولدرها: `{total_holders_int:,}`\n"
-                    except (ValueError, TypeError):
-                        text += f"• تعداد کل هولدرها: `{total_holders}`\n"
-                text += f"• تمرکز Top 10: `{concentration}%`\n"
-                text += f"• امتیاز توزیع: `{holder_stats.get('distribution_score', 0):.1f}/100`\n\n"
-
-            # --- بخش اضافه‌شده برای نمایش جریان نقدینگی ---
-            if liquidity_stats:
-                net_flow = liquidity_stats.get('net_flow_24h_usd', 0)
-                stability_ratio = liquidity_stats.get('liquidity_stability_ratio', 0)
-                flow_emoji = "🟢" if net_flow > 0 else "🔴"
-                
-                text += f"💰 **جریان نقدینگی (24h):**\n"
-                text += f"• خالص: {flow_emoji} `${net_flow:,.0f}`\n"
-                text += f"• نسبت پایداری: `{stability_ratio:.2f}`\n"
-            # --- پایان بخش اضافه‌شده ---
-
-            await callback.message.reply(text, parse_mode='Markdown')            
-
-        except Exception as e:
-            logger.error(f"OnChain analysis error: {e}")
-            await callback.message.reply("❌ خطا در دریافت داده‌های آنچین")
-
 
     async def support_handler(self, message: Message):
         """Handle /support command"""

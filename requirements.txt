@@ -53,3 +53,4 @@ psycopg2-binary==2.9.10
 redis==5.0.8
 aiosqlite==0.20.0
 Pillow==10.4.0
+sentry-sdk[fastapi]==2.1.1

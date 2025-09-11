@@ -12,9 +12,7 @@ class Settings(BaseSettings):
 
     # API Keys
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    # --- خطوط زیر اضافه شده‌اند ---
-    BITQUERY_API_KEY: str = os.getenv("BITQUERY_API_KEY", "")
-    HELIUS_API_KEY: str = os.getenv("HELIUS_API_KEY", "")
+    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
 
     # Scanner
     SCAN_INTERVAL: int = 180

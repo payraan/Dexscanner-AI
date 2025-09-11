@@ -8,11 +8,31 @@ from app.services.redis_client import redis_client
 from app.core.logging_config import setup_logging
 from app.services.result_tracker import run_tracking_loop, run_cleanup_loop
 import asyncio
+import sentry_sdk
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Starting DexScanner Bot...")
+
+    # --- بخش Sentry ---
+    if settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            # فعال‌سازی performance monitoring
+            traces_sample_rate=1.0,
+            # فعال‌سازی profiling
+            profiles_sample_rate=1.0,
+            integrations=[
+                sentry_sdk.integrations.fastapi.FastAPIIntegration(),
+                sentry_sdk.integrations.sqlalchemy.SqlalchemyIntegration(),
+                sentry_sdk.integrations.asyncio.AsyncioIntegration(),
+                sentry_sdk.integrations.redis.RedisIntegration(),
+            ],
+        )
+        print("✅ Sentry monitoring initialized")
+    else:
+        print("⚠️ SENTRY_DSN not configured, skipping monitoring")
 
     # Initialize database
     try:
