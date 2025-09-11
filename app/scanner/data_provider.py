@@ -13,33 +13,35 @@ class DataProvider:
         self.base_url = "https://api.geckoterminal.com/api/v2"
         self.max_retries = 5
         self.initial_backoff = 1.0
+        self.semaphore = asyncio.Semaphore(10)
 
     async def _api_request_handler(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
         """
         Handles API requests with caching, rate limiting, and exponential backoff.
         """
-        for attempt in range(self.max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.get(url, params=params)
-
-                    if response.status_code == 200:
-                        return response.json()
-                    elif response.status_code == 429:
-                        backoff_time = self.initial_backoff * (2 ** attempt)
-                        logger.warning(f"Rate limit hit for {url}. Retrying in {backoff_time:.2f} seconds...")
-                        await asyncio.sleep(backoff_time)
-                    else:
-                        logger.error(f"API Error: {response.status_code} for URL {url}. Response: {response.text[:200]}")
+        async with self.semaphore:
+            for attempt in range(self.max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.get(url, params=params)
+                        
+                        if response.status_code == 200:
+                            return response.json()
+                        elif response.status_code == 429:
+                            backoff_time = self.initial_backoff * (2 ** attempt)
+                            logger.warning(f"Rate limit hit for {url}. Retrying in {backoff_time:.2f} seconds...")
+                            await asyncio.sleep(backoff_time)
+                        else:
+                            logger.error(f"API Error: {response.status_code} for URL {url}. Response: {response.text[:200]}")
+                            return None
+                except httpx.RequestError as e:
+                    logger.error(f"HTTP request failed for {url}: {e}")
+                    if attempt >= self.max_retries - 1:
                         return None
-            except httpx.RequestError as e:
-                logger.error(f"HTTP request failed for {url}: {e}")
-                if attempt >= self.max_retries - 1:
-                    return None
-                await asyncio.sleep(self.initial_backoff * (2 ** attempt))
-
-        logger.error(f"Failed to fetch data from {url} after {self.max_retries} retries.")
-        return None
+                    await asyncio.sleep(self.initial_backoff * (2 ** attempt))
+                    
+            logger.error(f"Failed to fetch data from {url} after {self.max_retries} retries.")
+            return None
 
     def _generate_cache_key(self, endpoint: str, params: dict) -> str:
         """Generate unique cache key for API request"""
