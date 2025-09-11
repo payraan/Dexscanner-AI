@@ -9,6 +9,10 @@ from app.core.logging_config import setup_logging
 from app.services.result_tracker import run_tracking_loop, run_cleanup_loop
 import asyncio
 import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastAPIIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sentry_sdk.integrations.asyncio import AsyncioIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,10 +28,10 @@ async def lifespan(app: FastAPI):
             # فعال‌سازی profiling
             profiles_sample_rate=1.0,
             integrations=[
-                sentry_sdk.integrations.fastapi.FastAPIIntegration(),
-                sentry_sdk.integrations.sqlalchemy.SqlalchemyIntegration(),
-                sentry_sdk.integrations.asyncio.AsyncioIntegration(),
-                sentry_sdk.integrations.redis.RedisIntegration(),
+                FastAPIIntegration(),
+                SqlalchemyIntegration(),
+                AsyncioIntegration(),
+                RedisIntegration(),
             ],
         )
         print("✅ Sentry monitoring initialized")
