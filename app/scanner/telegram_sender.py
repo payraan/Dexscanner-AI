@@ -1,7 +1,7 @@
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from app.core.config import settings
-from app.scanner.chart_generator_mpl import chart_generator
+from app.scanner.chart_generator import chart_generator
 from app.database.session import get_db
 from app.database.models import User, Alert, Token, SignalResult
 from sqlalchemy import select
