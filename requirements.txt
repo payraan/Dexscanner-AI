@@ -54,3 +54,5 @@ redis==5.0.8
 aiosqlite==0.20.0
 Pillow==10.4.0
 sentry-sdk[fastapi]==2.1.1
+mplfinance==0.12.10b0
+mplfinance==0.12.10b0
