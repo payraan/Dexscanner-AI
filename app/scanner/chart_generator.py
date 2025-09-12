@@ -63,33 +63,56 @@ class ChartGenerator:
             ax.axhspan(zone['price'] - zone_height / 2, zone['price'] + zone_height / 2, color=color, alpha=alpha)
 
     def _remove_outlier_candles(self, df: pd.DataFrame) -> pd.DataFrame:
-        """یک تابع کمکی برای حذف کندل‌های پرت و نویزی بر اساس ارتفاع آنها."""
+        """حذف هوشمند کندل‌های پرت با روش percentile که پایدارتر است."""
         if df.empty or len(df) < 10:
             return df
         
-        df['candle_height'] = df['high'] - df['low']
-        # از quantile استفاده می‌کنیم که نسبت به داده‌های پرت مقاوم‌تر است
-        q1 = df['candle_height'].quantile(0.25)
-        q3 = df['candle_height'].quantile(0.75)
-        iqr = q3 - q1
-        # ضریب ۲.۵ کمی منعطف‌تر از ۱.۵ استاندارد است تا کندل‌های صرفاً بزرگ را حذف نکند
-        upper_bound = q3 + 2.5 * iqr
-
-        # فقط کندل‌هایی که ارتفاعشان در محدوده معقول است را نگه می‌داریم
-        cleaned_df = df[df['candle_height'] <= upper_bound].copy()
-        cleaned_df.drop(columns=['candle_height'], inplace=True)
+        # روش percentile برای حذف 1% بالا و پایین
+        upper_percentile = 99
+        lower_percentile = 1
         
-        # اگر فیلتر باعث حذف تمام داده‌ها شد، همان داده‌های اصلی را برمی‌گردانیم
-        if cleaned_df.empty:
-            return df.drop(columns=['candle_height'])
+        high_upper = np.percentile(df['high'], upper_percentile)
+        low_lower = np.percentile(df['low'], lower_percentile)
+        
+        # فیلتر کردن
+        cleaned_df = df[(df['high'] <= high_upper) & (df['low'] >= low_lower)].copy()
+        
+        # اگر بیش از 20% داده حذف شد، از داده اصلی استفاده کن
+        if len(cleaned_df) < len(df) * 0.8:
+            return df
             
-        return cleaned_df   
+        return cleaned_df
+
+    def _preprocess_ohlcv_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """پیش‌پردازش و تمیزسازی داده‌های OHLCV."""
+        if df.empty or len(df) < 5:
+            return pd.DataFrame()
+        
+        # حذف کندل‌های با حجم صفر
+        df = df[df['volume'] > 0].copy()
+        
+        # اطمینان از صحت داده‌ها
+        df = df[df['high'] >= df['low']].copy()
+        
+        # حذف مقادیر null
+        df = df.dropna()
+        
+        if df.empty:
+            return pd.DataFrame()
+            
+        return df
 
     def create_signal_chart(self, df: pd.DataFrame, signal_data: Dict) -> Optional[bytes]:
         """نمودار کندل استیک را با تمام اندیکاتورها و مقیاس‌بندی صحیح ایجاد می‌کند."""
         if df.empty or len(df) < 10:
             return None
         # --- این خط جدید را اینجا اضافه کن ---
+        # پیش‌پردازش داده‌ها
+        df = self._preprocess_ohlcv_data(df)
+        if df.empty or len(df) < 10:
+            return None
+        
+        # حذف داده‌های پرت
         df = self._remove_outlier_candles(df)
         
         # نام توکن از signal_data گرفته می‌شود که همیشه وجود دارد
@@ -165,14 +188,20 @@ class ChartGenerator:
         ax.set_ylabel('Price (USDT)', color='white', fontsize=10)
 
         # --- بخش کلیدی: تنظیم دستی محدوده محور Y برای نمایش کامل تارگت‌ها ---
-        all_prices = [df['low'].min(), df['high'].max()]
+        # استفاده از percentile برای حذف تاثیر outlier ها
+        low_percentile = np.percentile(df['low'], 2)
+        high_percentile = np.percentile(df['high'], 98)
+        
+        all_prices = [low_percentile, high_percentile]
         if fib_state and fib_state.get('target3'):
-            all_prices.append(fib_state['target3']) # اضافه کردن بالاترین تارگت به لیست قیمت‌ها
+            all_prices.append(fib_state['target3'])
         
         min_price = min(p for p in all_prices if p is not None and p > 0)
         max_price = max(p for p in all_prices if p is not None)
         
-        padding = (max_price - min_price) * 0.1 # 10% حاشیه در بالا و پایین
+        # padding دینامیک بر اساس volatility
+        price_range = max_price - min_price
+        padding = min(price_range * 0.1, max_price * 0.05)  # حداکثر 5% از قیمت
         ax.set_ylim(min_price - padding, max_price + padding)
         # --- پایان بخش کلیدی ---
 
