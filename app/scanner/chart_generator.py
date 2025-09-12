@@ -154,7 +154,7 @@ class ChartGenerator:
             ax.plot([row['datetime'], row['datetime']], [row['low'], row['high']], color=color, linewidth=1.5, alpha=0.9)
             
             time_diff = (df['datetime'].iloc[1] - df['datetime'].iloc[0]) if len(df) > 1 else timedelta(minutes=5)
-            width = time_diff * 0.7
+            width = time_diff * 0.5  # کاهش از 0.7 به 0.5
             
             body_height = abs(row['close'] - row['open'])
             body_bottom = min(row['open'], row['close'])
