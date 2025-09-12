@@ -47,6 +47,7 @@ class TelegramBot:
         # Handler جدید برای دکمه AI
         self.dp.callback_query.register(self.ai_analysis_handler, F.data.startswith("ai_analyze_"))
         self.dp.message.register(self.activate_subscription_handler, Command("activatesub"))
+        self.dp.message.register(self.broadcast_handler, Command("broadcast"))
 
     async def activate_subscription_handler(self, message: Message):
         """Handle /activatesub command for admins"""
@@ -244,6 +245,75 @@ class TelegramBot:
 
             except Exception as e:
                 logger.error(f"Error sending result for {result.id}: {e}")
+
+    async def broadcast_handler(self, message: Message):
+        """Handler for broadcast command - test version"""
+        # Check admin permission
+        if message.from_user.id not in settings.admin_list:
+            await message.answer("⛔️ شما اجازه استفاده از این دستور را ندارید.")
+            return
+        
+        # Extract content
+        photo_file_id = None
+        caption = None
+        text_message = None
+        
+        # Check if replying to a photo
+        if message.reply_to_message and message.reply_to_message.photo:
+            photo_file_id = message.reply_to_message.photo[-1].file_id
+            caption = message.text.replace("/broadcast", "").strip()
+            if not caption and message.reply_to_message.caption:
+                caption = message.reply_to_message.caption
+        else:
+            text_message = message.text.replace("/broadcast", "").strip()
+            if not text_message:
+                await message.answer(
+                    "⚠️ استفاده:\n"
+                    "🔹 متن: /broadcast متن شما\n"
+                    "🔹 عکس: روی عکس ریپلای و /broadcast کپشن"
+                )
+                return
+        
+        await message.answer("⏳ در حال دریافت لیست کاربران...")
+
+        # Get all users from database
+        from app.database.session import get_db
+        from app.database.models import User
+        from sqlalchemy import select
+        
+        all_user_ids = []
+        async for session in get_db():
+            result = await session.execute(select(User.id))
+            all_user_ids = result.scalars().all()
+        
+        if not all_user_ids:
+            await message.answer("❌ هیچ کاربری یافت نشد.")
+            return
+        
+        # Start sending
+        await message.answer(f"✅ شروع ارسال به {len(all_user_ids)} کاربر...")
+        success_count = 0
+        fail_count = 0
+        
+        for user_id in all_user_ids:
+            try:
+                if photo_file_id:
+                    await self.bot.send_photo(chat_id=user_id, photo=photo_file_id, caption=caption)
+                else:
+                    await self.bot.send_message(chat_id=user_id, text=text_message)
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send to {user_id}: {e}")
+                fail_count += 1
+            
+            await asyncio.sleep(0.1)  # Small delay to prevent spam
+        
+        # Final report
+        await message.answer(
+            f"🚀 ارسال همگانی کامل شد!\n\n"
+            f"✅ موفق: {success_count}\n"
+            f"❌ ناموفق: {fail_count}"
+        )
 
     async def start_polling(self):
         """Start bot polling"""
