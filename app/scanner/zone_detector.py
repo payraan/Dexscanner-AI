@@ -8,15 +8,24 @@ class ZoneDetector:
         self.min_zone_score = 2.0
         self.max_zones = 5
     
-    def find_support_resistance_zones(self, df: pd.DataFrame) -> List[Dict]:
+    def find_support_resistance_zones(self, df: pd.DataFrame, timeframe: str, aggregate: str) -> List[Dict]:
         """Find support and resistance zones using swing points"""
         if len(df) < 20:
             return []
-        
+        # Dynamic parameters based on timeframe
+        if timeframe == 'minute' and aggregate in ['1', '5']:
+            order = 10
+            merge_threshold = 0.05  # 5% as requested
+        elif timeframe == 'minute' and aggregate == '15':
+            order = 7
+            merge_threshold = 0.05
+        else:
+            order = 5
+            merge_threshold = 0.05
+
         zones = []
         
         # Find swing highs and lows
-        order = 5  # Look for peaks/valleys over 5 periods
         high_points = argrelextrema(df['high'].values, np.greater, order=order)[0]
         low_points = argrelextrema(df['low'].values, np.less, order=order)[0]
         
@@ -56,9 +65,51 @@ class ZoneDetector:
                         'touches': touches
                     })
         
+        # Merge close zones
+        zones = self._merge_close_zones(zones, merge_threshold)
         # Sort by score and return top zones
         zones.sort(key=lambda x: x['score'], reverse=True)
         return zones[:self.max_zones]
+
+    def _merge_close_zones(self, zones: List[Dict], merge_threshold: float) -> List[Dict]:
+        """Merge zones that are close to each other"""
+        if not zones:
+            return []
+        
+        zones.sort(key=lambda z: z['price'])
+        merged = []
+        current_group = [zones[0]]
+        
+        for i in range(1, len(zones)):
+            last_price = current_group[-1]['price']
+            price_diff = abs(zones[i]['price'] - last_price) / last_price
+            
+            if zones[i]['type'] == current_group[0]['type'] and price_diff < merge_threshold:
+                current_group.append(zones[i])
+            else:
+                # Merge current group
+                avg_price = sum(z['price'] for z in current_group) / len(current_group)
+                total_score = sum(z['score'] for z in current_group)
+                merged.append({
+                    'price': avg_price,
+                    'type': current_group[0]['type'],
+                    'score': total_score,
+                    'touches': sum(z.get('touches', 0) for z in current_group)
+                })
+                current_group = [zones[i]]
+        
+        # Don't forget last group
+        if current_group:
+            avg_price = sum(z['price'] for z in current_group) / len(current_group)
+            total_score = sum(z['score'] for z in current_group)
+            merged.append({
+                'price': avg_price,
+                'type': current_group[0]['type'],
+                'score': total_score,
+                'touches': sum(z.get('touches', 0) for z in current_group)
+            })
+        
+        return merged
     
     def _count_touches(self, df: pd.DataFrame, level: float, zone_type: str) -> int:
         """Count how many times price touched a level"""

@@ -19,16 +19,27 @@ FIB_EXT_LEVELS = {
 
 class FibonacciEngine:
 
-    def _find_latest_swing_points(self, df: pd.DataFrame):
+    def _find_latest_swing_points(self, df: pd.DataFrame, timeframe: str, aggregate: str):
         """
         آخرین موج حرکتی معتبر را با در نظر گرفتن هر دو حالت صعودی و نزولی و با فیلتر اهمیت موج شناسایی می‌کند.
         """
         if len(df) < 20:
             return None, None
 
+        # Dynamic parameters based on timeframe
+        if timeframe == 'minute' and aggregate in ['1', '5']:
+            order = 12
+            min_wave_multiplier = 5.0
+        elif timeframe == 'minute' and aggregate == '15':
+            order = 8
+            min_wave_multiplier = 4.0
+        else:
+            order = 5
+            min_wave_multiplier = 3.0
+
         # پیدا کردن نقاط اکسترمم نسبی
-        swing_high_indices = argrelextrema(df['high'].values, np.greater_equal, order=5)[0]
-        swing_low_indices = argrelextrema(df['low'].values, np.less_equal, order=5)[0]
+        swing_high_indices = argrelextrema(df['high'].values, np.greater_equal, order=order)[0]
+        swing_low_indices = argrelextrema(df['low'].values, np.less_equal, order=order)[0]
 
         if swing_high_indices.size < 2 or swing_low_indices.size < 2:
             return None, None
@@ -37,7 +48,7 @@ class FibonacciEngine:
         # یک معیار برای نوسانات عادی قیمت پیدا می‌کنیم (میانگین ارتفاع کندل‌ها)
         avg_candle_height = (df['high'] - df['low']).median()
         # موجی مهم تلقی می‌شود که حداقل ۳ برابر نوسان عادی باشد
-        MIN_WAVE_SIGNIFICANCE = 3.0 * avg_candle_height
+        MIN_WAVE_SIGNIFICANCE = min_wave_multiplier * avg_candle_height
 
         # پیدا کردن آخرین high و low
         latest_high_idx = swing_high_indices[-1]
@@ -83,7 +94,16 @@ class FibonacciEngine:
         موتور اصلی فیبوناچی با PostgreSQL UPSERT pattern
         """
         try:
-            current_swing_high, current_swing_low = self._find_latest_swing_points(df)
+            # Parse timeframe string (e.g., "minute_5" -> timeframe="minute", aggregate="5")
+            if '_' in timeframe:
+                tf_parts = timeframe.split('_')
+                tf_type = tf_parts[0]
+                tf_aggregate = tf_parts[1]
+            else:
+                tf_type = timeframe
+                tf_aggregate = "1"
+
+            current_swing_high, current_swing_low = self._find_latest_swing_points(df, tf_type, tf_aggregate)
             current_price = df['close'].iloc[-1]
 
             # اگر موج معتبری پیدا نشد، state موجود را برگردان (در صورت وجود)

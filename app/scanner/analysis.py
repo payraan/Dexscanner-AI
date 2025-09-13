@@ -130,7 +130,7 @@ class AnalysisEngine:
                     'target3': fibo_state.target3_price, 'status': fibo_state.status
                 }
 
-            raw_zones = zone_detector.find_support_resistance_zones(df)
+            raw_zones = zone_detector.find_support_resistance_zones(df, timeframe, aggregate)
             final_zones = self._create_confluence_zones(raw_zones, fibo_state_dict)
             
             # --- LOGIC REMOVED: No longer calls strategies directly ---
